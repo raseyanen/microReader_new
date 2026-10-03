@@ -64,7 +64,7 @@
 #include <FileData.h>       // Замена епрома
 #include <LittleFS.h>       // Либа файловой системы (в ядре esp32 есть из коробки)
 #include <GyverPortal.h>    // Либа веб морды (автоматически выберет WebServer для ESP32)
-// StringUtils подключается в compat.ino (с проверкой наличия библиотеки)
+#include <StringUtils.h>    // Либа работы со строками (su::Text / su::TextParser)
 #include <GyverOLED_fix.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
 #include <TJpg_Decoder.h>   // Либа jpg'а
@@ -123,6 +123,30 @@ uint16_t readBatteryMv(void) {
   return (uint16_t)(mv * VBAT_DIVIDER);              // восстанавливаем напряжение батареи
 }
 /* =========================================== */
+
+/* ==== Прототипы функций из других табов (.ino) ==== */
+// Arduino IDE генерирует прототипы автоматически, но вставляет их ПЕРЕД
+// #include'ами, из-за чего типы из библиотек (su::Text, TexNode и т.п.)
+// остаются неизвестными. Объявляем прототипы вручную:
+void checkFileSystem(void);                                              // files.ino
+void drawPage(File file);
+void enterToReadTxtFile(void);
+void enterToReadBmpFile(void);
+void enterToReadJpgFile(void);
+void enterToReadTexFile(void);                                           // texMath.ino
+uint8_t parseItxt(uint8_t* img, File file);
+bool oled_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap);
+uint8_t getBright(uint16_t clr);
+void checkBatteryCharge(void);                                           // ui.ino
+void drawBatteryCharge(void);
+void drawMainMenu(void);
+void drawStaMenu(void);
+void drawApMenu(void);
+void fileReadError(void);
+void enterToServiceMode(void);                                           // servmode.ino
+void enterToWifiMenu(void);                                              // wifi.ino / portal.ino
+void enterToGameMode(void);                                              // gamemode.ino
+/* =================================================== */
 
 void setup() {
   Serial.begin(115200);

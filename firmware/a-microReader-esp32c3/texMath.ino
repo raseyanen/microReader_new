@@ -17,11 +17,10 @@
 #define TEX_MAX_LINES 5      // максимум строк формулы на странице
 #define TEX_LINE_LEN 96      // максимум символов в строке
 #include "texFont.h"         // мини-шрифт 5x7 для рендера формул
-static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
-static uint8_t texLineCount = 0;
-static int8_t texPage = 0;   // текущая страница (блок строк)
 
-// ------------------ разбор дерева формул ------------------
+// ------------------ прототипы static-функций ------------------
+// (Arduino IDE вставляет автопрототипы перед #include, из-за чего
+//  struct TexNode ещё не объявлен — объявляем сами)
 struct TexNode {
   enum Type { TEXT, SUP, SUB, FRAC, SQRT, BIGOP, BINOP_SYM } type;
   const char* text;         // для TEXT / BINOP_SYM
@@ -31,7 +30,24 @@ struct TexNode {
   TexNode* c = nullptr;     // пределы сверху
   TexNode* next = nullptr;  // следующая нода в списке
 };
+static TexNode* texAlloc();
+static TexNode* texMakeText(const char* s, uint8_t l);
+static void texAppendChar(char* buf, uint8_t& i, char c);
+static TexNode* texParseSeq(const char*& p, char terminator);
+static TexNode* texParseGroup(const char*& p);
+static void texPix(int16_t x, int16_t y, bool on);
+static void texHLine(int16_t x0, int16_t x1, int16_t y);
+static int16_t texTextW(TexNode* n);
+static int16_t texDraw(TexNode* n, int16_t x, int16_t baselineY);
+static void texLoadPages(File file);
+static void texRenderPage(File file);
+// ------------------------------------------------------------
 
+static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
+static uint8_t texLineCount = 0;
+static int8_t texPage = 0;   // текущая страница (блок строк)
+
+// ------------------ разбор дерева формул ------------------
 static TexNode* texAlloc() {
   static TexNode pool[160];
   static uint8_t used = 0;
