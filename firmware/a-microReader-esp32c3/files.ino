@@ -17,7 +17,7 @@ void checkFileSystem(void) {           // Проверка и индексаци
   while (File file = root.openNextFile()) {  // Шагаем по директории (ESP32 API вместо Dir)
     yield();                           // Внутренний поллинг
     if (file) {                        // Если файл существует
-      su::Text filename(file.name());  // Создаем строку с именем
+      sutil::Text filename(file.name());  // Создаем строку с именем
       if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && (filename.endsWith(".txt") || filename.endsWith(".itxt") || filename.endsWith(".h") || filename.endsWith(".jpg"))) {
         fileCount++;                   // Нормальный файл (Имя короткое, тип .txt / .itxt / .h / .jpg)
         fileNames += "/";              // + /
@@ -208,7 +208,7 @@ uint8_t parseItxt(uint8_t *img, File file) {
 
   while (file.available()) {                    // Пока файл не кончился
     String line = file.readStringUntil('\n');   // Читаем по строке
-    su::TextParser p(line, ',');                // Готовим парсер
+    sutil::TextParser p(line, ',');                // Готовим парсер
     while (p.parse()) {                         // Парсим по ','
       uint8_t val = p.trim().toInt32HEX();      // Вытаскиваем байт
       if (INVERT_IMG) val = ~val;               // Если надо - инвертировать
