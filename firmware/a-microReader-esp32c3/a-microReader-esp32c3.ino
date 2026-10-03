@@ -64,7 +64,13 @@
 #include <FileData.h>       // Замена епрома
 #include <LittleFS.h>       // Либа файловой системы (в ядре esp32 есть из коробки)
 #include <GyverPortal.h>    // Либа веб морды (автоматически выберет WebServer для ESP32)
-#include <StringUtils.h>    // Либа работы со строками (su::Text / su::TextParser)
+// ВАЖНО: в ядре esp32 v3.x есть СВОЙ файл StringUtils.h в cores/esp32
+// (служебные функции u64_to_str и т.п.). Компилятор находит заголовки по
+// путям ЯДРА РАНЬШЕ, чем по путям библиотек, поэтому угловой include
+// <StringUtils.h> подтягивает файловскую версию ядра, а не библиотеку
+// GyverLibs — отсюда ошибка 'su' has not been declared.
+// Лечится относительным include'ом header'а самой библиотеки:
+#include "../../libraries/StringUtils/src/StringUtils.h"  // GyverLibs StringUtils (su::Text / su::TextParser)
 #include <GyverOLED_fix.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
 #include <TJpg_Decoder.h>   // Либа jpg'а
