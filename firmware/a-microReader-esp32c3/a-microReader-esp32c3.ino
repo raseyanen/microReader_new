@@ -42,9 +42,9 @@
 #define WIFI_TIMEOUT_S    300           // Таймаут на отключение Wi-Fi (С)
 #define UP_BTN_PIN        3             // GPIO для кнопки ВВЕРХ   (ESP32-C3 Super Mini)
 #define OK_BTN_PIN        2             // GPIO для кнопки ОК      (ESP32-C3 Super Mini)
-#define DWN_BTN_PIN       1             // GPIO для кнопки ВНИЗ    (ESP32-C3 Super Mini)
-#define IIC_SDA_PIN       6             // GPIO SDA дисплея        (ESP32-C3 Super Mini)
-#define IIC_SCL_PIN       7             // GPIO SCL дисплея        (ESP32-C3 Super Mini)
+#define DWN_BTN_PIN       0             // GPIO для кнопки ВНИЗ    (ESP32-C3 Super Mini)
+#define IIC_SDA_PIN       8             // GPIO SDA дисплея        (ESP32-C3 Super Mini)
+#define IIC_SCL_PIN       9             // GPIO SCL дисплея        (ESP32-C3 Super Mini)
 #define VBAT_ADC_PIN      1             // ADC1_CH1 для измерения напряжения батареи
 #define VBAT_DIVIDER      2             // Коэффициент делителя (1 - без делителя, 2 - делитель 50/50)
 #define EE_KEY            'B'           // Ключ EEPROM (1 байт) - измени, чтобы сбросить настройки
