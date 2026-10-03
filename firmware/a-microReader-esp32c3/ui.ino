@@ -28,7 +28,11 @@ void drawBatteryCharge(void) {                       // Рисуем батар�
 }
 /* ======================================================================= */
 /* ============================ Главное меню ============================= */
-void drawMainMenu(void) {     // Отрисовка главного меню
+void drawMainMenu(void) {   // Отрисовка главного меню
+  if (fileCount < 0) fileCount = 0;
+  if (cursor > fileCount - 1) cursor = fileCount - 1;  // Курсор не должен уезжать за конец списка
+  if (cursor < 0) cursor = 0;
+
   oled.clear();               // Очистка
   oled.home();                // Возврат на 0,0
   oled.line(0, 10, 127, 10);  // Линия
@@ -36,24 +40,26 @@ void drawMainMenu(void) {     // Отрисовка главного меню
   oled.print(fileCount);      // Выводим кол-во файлов + битые при наличии
   if (badCount) oled.printf("[%i]", fileCount + badCount);
 
-  int sidx = (cursor < 6 ? 0 : cursor - 5);  // Начальный индекс
-  int i = 2;                                 // Строка на дисплее
-  sutil::TextParser p(fileNames, '/');          // Парсер
-  while (p.parse()) {                        // Циклически парсим строку имен
-    if (p.index() > sidx) {                  // Пока не дошли до начальной позиции
-      oled.setCursor(6, i++);                // Ставим курсор
-      oled.print(p);                         // Выводим имя
-    }
-    if (p.index() == cursor + 1) {       // Если курсор указывает на имя
-      selectedFile = p.toString();       // Запоминаем имя (без ambiguous String(p) на ESP32)
-    }
-    if (p.index() > sidx + 5) break;     // Как только распарсили 6 строк - выходим
-    yield();                             // Внутренний поллинг ESP
+  const int VISIBLE = 5;            // Видимых строк в списке
+  const int firstRow = 2;           // Первая строка списка (пиксельная строка 16)
+  int sidx = constrain(cursor - (VISIBLE - 1), 0, fileCount > 0 ? fileCount - 1 : 0);  // Индекс первой видимой записи (0-based)
+
+  selectedFile = "";             // Сбрасываем: если имя не найдём — не откроем мусор
+  su::TextParser p(fileNames, "/");  // Парсер (index() нумерует записи С ЕДИНИЦЫ!)
+  uint8_t row = 0;                  // Смещение видимой строки (0-based)
+  while (p.parse()) {               // Циклически парсим строку имен
+    int idx = (int)p.index() - 1;   // Переход к 0-based индексу записи
+    if (idx < sidx) continue;       // Пропускаем записи выше окна прокрутки
+    if (row >= VISIBLE) break;      // Окно заполнено
+    oled.setCursor(6, firstRow + row);  // Ставим курсор на нужную строку
+    oled.print(p.get());                // Выводим имя файла
+    if (idx == cursor) selectedFile = p.get().toString();  // Запоминаем выбранное имя
+    row++;
+    yield();                          // Внутренний поллинг ESP
   }
 
-  int cp = constrain(cursor, 0, 5) + 2;  // Ограничиваем позицию курсора
-  oled.setCursor(0, cp);                 // Указывем строку для курсора
-  oled.print(">");                       // Выводим курсор
+  oled.setCursor(0, firstRow + (cursor - sidx));  // Курсор напротив выбранной записи
+  oled.print(">");                                // Выводим галочку-курсор
   checkBatteryCharge();                  // Проверка напряжение аккума
   drawBatteryCharge();                   // Рисуем индикатор
   oled.update();                         // Выводим картинку
