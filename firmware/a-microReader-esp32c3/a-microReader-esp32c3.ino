@@ -220,6 +220,8 @@ void loop() {
         enterToReadTxtFile();               // Читаем как текст
       } else if (selectedFile.endsWith(".itxt") || selectedFile.endsWith(".h")) {  // Если битмап
         enterToReadBmpFile();               // Читаем как картинку
+      } else if (selectedFile.endsWith(".tex")) {  // Если формула в TeX-синтаксисе
+        enterToReadTexFile();                      // Рендерим формулы
       } else if (selectedFile.endsWith(".jpg")) {
         enterToReadJpgFile();
       }
