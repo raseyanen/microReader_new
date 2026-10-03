@@ -1,0 +1,3 @@
+# Arduino/ESP32 build artifacts
+firmware/BIN/
+build/
