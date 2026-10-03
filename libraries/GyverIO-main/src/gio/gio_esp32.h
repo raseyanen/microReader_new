@@ -5,6 +5,9 @@
 
 #include <Arduino.h>
 #include <driver/rtc_io.h>
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include "soc/gpio_struct.h"  // структура GPIO регистров (нужна для ESP32-C3/S3 и ядра esp32 3.x)
+#endif
 
 #include "gio_defs.h"
 

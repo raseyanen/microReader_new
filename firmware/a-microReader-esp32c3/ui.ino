@@ -38,7 +38,7 @@ void drawMainMenu(void) {     // Отрисовка главного меню
 
   int sidx = (cursor < 6 ? 0 : cursor - 5);  // Начальный индекс
   int i = 2;                                 // Строка на дисплее
-  su::TextParser p(fileNames, '/');          // Парсер
+  sutil::TextParser p(fileNames, '/');          // Парсер
   while (p.parse()) {                        // Циклически парсим строку имен
     if (p.index() > sidx) {                  // Пока не дошли до начальной позиции
       oled.setCursor(6, i++);                // Ставим курсор
