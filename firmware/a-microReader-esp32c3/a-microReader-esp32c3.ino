@@ -64,7 +64,7 @@
 #include <FileData.h>       // Замена епрома
 #include <LittleFS.h>       // Либа файловой системы (в ядре esp32 есть из коробки)
 #include <GyverPortal.h>    // Либа веб морды (автоматически выберет WebServer для ESP32)
-#include <StringUtils.h>    // Либа утилит строк
+// StringUtils подключается в compat.ino (с проверкой наличия библиотеки)
 #include <GyverOLED_fix.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
 #include <TJpg_Decoder.h>   // Либа jpg'а
@@ -220,6 +220,8 @@ void loop() {
         enterToReadTxtFile();               // Читаем как текст
       } else if (selectedFile.endsWith(".itxt") || selectedFile.endsWith(".h")) {  // Если битмап
         enterToReadBmpFile();               // Читаем как картинку
+      } else if (selectedFile.endsWith(".tex")) {  // Если формула в TeX-синтаксисе
+        enterToReadTexFile();                      // Рендерим формулы
       } else if (selectedFile.endsWith(".jpg")) {
         enterToReadJpgFile();
       }

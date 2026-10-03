@@ -17,9 +17,9 @@ void checkFileSystem(void) {           // Проверка и индексаци
   while (File file = root.openNextFile()) {  // Шагаем по директории (ESP32 API вместо Dir)
     yield();                           // Внутренний поллинг
     if (file) {                        // Если файл существует
-      sutil::Text filename(file.name());  // Создаем строку с именем
-      if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && (filename.endsWith(".txt") || filename.endsWith(".itxt") || filename.endsWith(".h") || filename.endsWith(".jpg"))) {
-        fileCount++;                   // Нормальный файл (Имя короткое, тип .txt / .itxt / .h / .jpg)
+      sutil::Text filename(basenameOf(file.name()));  // Имя файла без ведущего "/"
+      if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && (filename.endsWith(".txt") || filename.endsWith(".itxt") || filename.endsWith(".h") || filename.endsWith(".jpg") || filename.endsWith(".tex"))) {
+        fileCount++;                   // Нормальный файл (Имя короткое, тип .txt / .itxt / .h / .jpg / .tex)
         fileNames += "/";              // + /
         fileNames += basenameOf(file.name());  // + Имя файла без ведущего "/"
       } else if (!filename.endsWith(".dat")) badCount++;     // Битый

@@ -1,1 +1,2 @@
-(empty)
+# Firmware build artifacts
+*.bin
