@@ -742,7 +742,6 @@ static void texRenderPage(File file) {
   // короче ширины экрана переводит курсор на новую строку и screen.dirty()
   // каждый такой вызов выводит ОДНУ строку. Пока идем построчно - это выглядит
   // как "все формулы = последняя". Отключаем автоперенос на время рендера.
-  bool ap = oled.isAutoPrintln();
   oled.autoPrintln(false);
 
   file.seek(0);
@@ -794,7 +793,7 @@ static void texRenderPage(File file) {
       if (texBuf[y * 16 + (x >> 3)] & (0x80 >> (x & 7))) oled.dot(x, y, 1);
   oled.update();
 
-  oled.autoPrintln(ap);                       // возвращаем настройку читалки
+  oled.autoPrintln(true);                     // читалка печатает построчно (см. setup())
 }
 
 void enterToReadTexFile(void) {
