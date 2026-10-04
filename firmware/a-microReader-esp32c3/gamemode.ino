@@ -17,7 +17,7 @@ void enterToDeepSleep(void) {
   oled.print(F("СОН..."));
   oled.setScale(1);
   oled.setCursorXY(8, 44);
-  oled.print(F("ВВЕРХ - разбудить"));
+  oled.print(F("ВВЕРХ - разбудить")); // Теперь любая кнопка разбудит чип
   oled.update();
   delay(800);
 
@@ -30,11 +30,18 @@ void enterToDeepSleep(void) {
   pinMode(OK_BTN_PIN, INPUT_PULLUP);
   pinMode(DWN_BTN_PIN, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH); // лед погашен (активен LOW на многих модах)
+  digitalWrite(LED_BUILTIN, HIGH); // лед погашен
 
-  // маска пинов для EXT1 (пробуждение по ЛЮБОЙ из кнопок)
+  // Для ESP32-C3 на уровне регистра принудительно выставляем пины на вход
+  gpio_set_direction((gpio_num_t)UP_BTN_PIN, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)OK_BTN_PIN, GPIO_MODE_INPUT);
+  gpio_set_direction((gpio_num_t)DWN_BTN_PIN, GPIO_MODE_INPUT);
+
+  // Маска пинов для ESP32-C3 (Важно: пины кнопок ОБЯЗАТЕЛЬНО должны быть в диапазоне GPIO 0..5!)
   uint64_t mask = (1ULL << UP_BTN_PIN) | (1ULL << OK_BTN_PIN) | (1ULL << DWN_BTN_PIN);
-  esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+  
+  // Активируем пробуждение по низкому уровню (кнопка нажата -> GND)
+  esp_deep_sleep_enable_gpio_wakeup(mask, ESP_GPIO_WAKEUP_GPIO_LOW);
 
   delay(100);                     // дать I2C/питанию успокоиться
   esp_deep_sleep_start();         // не возвращает управление

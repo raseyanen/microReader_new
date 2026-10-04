@@ -75,6 +75,7 @@
 #include <EncButton.h>      // Либа кнопок
 #include <TJpg_Decoder.h>   // Либа jpg'а
 #include <GyverTimer.h>     // Либа таймера
+#include "driver/gpio.h"
 
 /* =========================================== */
 /* ============ Список объектов ============== */

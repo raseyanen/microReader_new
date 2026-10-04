@@ -3,722 +3,653 @@
 /* Миникалькулятор формул для OLED 128x64 (GyverOLED).                     */
 /*                                                                         */
 /* ФОРМАТ ФАЙЛА:                                                           */
-/*   Одна формула = одна страница.                                         */
-/*   Новая формула начинается с команды \title{Название}                   */
-/*   (или со строки "## Название"). Если названий нет - каждая             */
-/*   непустая строка файла считается отдельной формулой (страницей).       */
-/*   Строки, начинающиеся с % или // - комментарии.                       */
-/*   Внутри одной формулы можно писать несколько строк - они склеиваются   */
-/*   в блок (до 5 строк).                                                  */
+/*   Одна формула = одна страница. Новая формула начинается с \title{Имя}  */
+/*   или со строки "## Имя". Если названий нет - каждая непустая строка    */
+/*   файла - отдельная страница ("Имя: формула" тоже работает).            */
+/*   Строки с % или // - комментарии. Строки внутри формулы (до 5)         */
+/*   рисуются друг под другом. \begin{..}/\end{..} игнорируются.           */
 /*                                                                         */
-/* ПОДДЕРЖИВАЕТСЯ СИНТАКСИС:                                               */
-/*   ^{...} _{...}          степени / индексы                              */
-/*   \frac{a}{b} \dfrac     дробь                                          */
-/*   \binom{n}{k}           биномиальный коэффициент                       */
-/*   \sqrt[n]{...}          корень n-й степени (\sqrt{...} - квадратный)   */
-/*   \int_a^b{...}          интеграл с пределами                          */
-/*   \iint \iiint \oint     двойной/тройной/контурный интегралы           */
-/*   \sum_{a}^{b}{...}      сумма с пределами                              */
-/*   \prod \bigcup \bigcap  произведение, объединение, пересечение         */
-/*   \lim_{x\to a}{...}     предел (подпись снизу)                         */
-/*   \left( \right) \bigl \bigr \Bigl \Bigr -> обычные скобки              */
-/*   \underbrace{..}_{..}   нижняя огибающая с подписью                    */
-/*   \vec{x} \hat{x} \bar{x} \dot{x} \ddot{x} \tilde{x} \overline{x}       */
-/*   \overrightarrow{AB}    акцент над выражением                           */
-/*   \text{...} \mathrm{...} \operatorname{...} текст внутри формулы       */
-/*   \begin{...} \end{...} \section \label - метки игнорируются            */
-/*   $ ... $                маркеры формулы (игнорируются)                 */
-/*   Греки: alpha beta gamma delta epsilon varepsilon zeta eta theta       */
-/*          vartheta iota kappa lambda mu nu xi omicron pi rho sigma       */
-/*          tau upsilon phi varphi chi psi omega + заглавные версии        */
-/*   Операторы: \cdot \times \div \pm \mp \ast \star \circ \bullet         */
-/*     \oplus \ominus \otimes \oslash \odot \setminus                      */
-/*   Отношения: \leq \geq \neq \approx \equiv \sim \cong \propto           */
-/*     \perp \parallel \ll \gg                                             */
-/*   Логика/множества: \in \notin \subset \subseteq \supset \forall        */
-/*     \exists \neg \land \lor \emptyset \varnothing \therefore            */
-/*   Спецсимволы: \infty \partial \nabla \hbar \ell \Re \Im \aleph         */
-/*     \angle \degree \surd \square \checkmark \langle \rangle             */
-/*   Стрелки: \to \rightarrow \leftarrow \Rightarrow \Leftarrow             */
-/*     \leftrightarrow \Leftrightarrow \mapsto \uparrow \downarrow          */
-/*     \nearrow \searrow \iff                                              */
-/*   Многоточия: \ldots \cdots \vdots \ddots \dots                         */
-/*   Функции: \log \ln \exp \sin \cos \tan \cot \sec \csc \arcsin          */
-/*     \sinh \max \min \det \dim \ker \deg \gcd \arg \mod                  */
-/*   Неизвестные команды печатаются как текст без обратного слэша.         */
+/* ПОДДЕРЖИВАЕТСЯ:                                                         */
+/*   ^ _ (индексы/степени, x_1^2), \frac \dfrac \binom, \sqrt[n]{..}       */
+/*   \int \iint \iiint \oint \sum \prod \bigcup \bigcap (с пределами)      */
+/*   \lim \max \min \sup \inf (пределы под именем), \sin \cos \log ...     */
+/*   \vec \hat \bar \dot \ddot \tilde \acute \grave \check \underline      */
+/*   \overline \overrightarrow \widehat \widetilde                         */
+/*   \underbrace{..}_{..} \overbrace{..}^{..} \stackrel \overset \underset */
+/*   \text{..} \mathrm \operatorname (с пробелами), \mathbf \mathcal ...   */
+/*   \left \right \big \Big ... (просто пропускаются)                      */
+/*   \, \; \: \quad \qquad ~ - пробелы                                     */
+/*   греческие буквы, ~90 математических символов (см. texFont.h),         */
+/*   неизвестные команды печатаются как текст без обратного слэша.         */
+/*   Если строка шире экрана или страница не влезает - мелкий шрифт 3x5.   */
 /* ======================================================================= */
 
-#define TEX_MAX_LINES 5      // максимум строк внутри одного блока формулы
-#define TEX_LINE_LEN 96      // максимум символов в строке
-#define TEX_NAME_LEN 20      // максимум символов названия формулы
-#include "texFont.h"         // мини-шрифт 5x7 для рендера формул
+#define TEX_MAX_LINES 5      // максимум строк в одной формуле
+#define TEX_LINE_LEN 128     // максимум символов в строке
+#define TEX_NAME_LEN 20      // максимум символов в названии
+#define TEX_MAX_PAGES 40     // максимум формул (страниц) в файле
+#define TEX_POOL 320         // максимум нод дерева на страницу
+#include "texFont.h"
 
-// ------------------ прототипы static-функций ------------------
-// (Arduino IDE вставляет автопрототипы перед #include, из-за чего
-//  struct TexNode ещё не объявлен — объявляем сами)
+// ------------------ типы (ДО автопрототипов Arduino IDE) ------------------
+enum : uint8_t { T_TEXT, T_SYM, T_SPACE, T_GROUP, T_FRAC, T_SQRT, T_BIGOP, T_ACCENT, T_BRACE };
+enum : uint8_t { F_LIMITS = 1, F_BINOM = 2, F_PAD = 4, F_FUNC = 8, F_OVER = 16 };
+
 struct TexNode {
-  enum Type { TEXT, SUP, SUB, FRAC, SQRT, BIGOP, LIMIT, ACCENT, UNDER, OVER } type;
-  const char* text;         // для TEXT / имя BIGOP / тип ACCENT
-  uint8_t len;              // длина текста
-  TexNode* a = nullptr;     // тело / числитель / основание
-  TexNode* b = nullptr;     // знаменатель / нижний предел / подпись
-  TexNode* c = nullptr;     // верхний предел / индекс корня
-  TexNode* next = nullptr;  // следующая нода в списке
+  uint8_t type, flags, len;      // len: длина текста / вид акцента или оператора / ширина пробела
+  const char* text;              // TEXT: строка; SYM: картинка глифа
+  TexNode *a, *b, *c;            // a - тело/числитель, b - знаменатель, c - индекс корня
+  TexNode *next;                 // следующая нода
+  TexNode *sup, *sub;            // степень и индекс (или пределы сверху/снизу)
 };
+struct TexBox { int16_t w, up, dn; };   // ширина, строк выше базовой линии, строк ниже
+
+// ------------------ прототипы ------------------
 static TexNode* texAlloc();
 static TexNode* texMakeText(const char* s, uint8_t l);
-static void texAppendChar(char* buf, uint8_t& i, char c);
-static TexNode* texParseSeq(const char*& p, char terminator);
+static TexNode* texMakeSpace(uint8_t w);
+static TexNode* texParseSeq(const char*& p, char term);
 static TexNode* texParseGroup(const char*& p);
-static TexNode* texParseOneCmd(const char*& p);
-static void texPix(int16_t x, int16_t y, bool on);
-static void texHLine(int16_t x0, int16_t x1, int16_t y);
-static void texVLine(int16_t x, int16_t y0, int16_t y1);
-static int16_t texTextW(TexNode* n);
-static int16_t texDraw(TexNode* n, int16_t x, int16_t baselineY);
-static void texLoadPages(File file);
+static TexNode* texParseCmd(const char*& p);
+static TexNode* texParseRaw(const char*& p);
+static TexBox texLay(TexNode* n, int16_t x, int16_t base, uint8_t lvl, bool draw);
+static TexBox texAtom(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd);
+static TexBox texCore(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd);
+static void texLoadPages(File file, int8_t target);
 static void texRenderPage(File file);
 
-// сбрасывает кольцевой пул нод перед парсингом каждой страницы/формулы.
-// Без этого при повторных вызовах texParseSeq() новые формулы начинали
-// использовать "хвост" старого пула: указатели next/b/c оставались от
-// предыдущих деревьев и на экране появлялась каша/последняя формула.
-static void texResetPool() {
-  extern uint8_t texPoolUsed;   // определяется рядом с пулом
-  texPoolUsed = 0;
-}
-// ------------------------------------------------------------
-
+// ------------------ данные страницы ------------------
 static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
 static uint8_t texLineCount = 0;
-static int8_t texPage = 0;          // текущая страница (одна формула)
-static char texNames[24][TEX_NAME_LEN + 1];   // названия формул (до 24 страниц)
+static int8_t texPage = 0;
+static char texNames[TEX_MAX_PAGES][TEX_NAME_LEN + 1];
 static uint8_t texNameCount = 0;
 
-// ------------------ разбор дерева формул ------------------
-uint8_t texPoolUsed = 0;            // счётчик занятых нод (сбрасывается на страницу)
+// ------------------ пул нод ------------------
+static TexNode texPool[TEX_POOL];
+static uint16_t texPoolUsed = 0;
+static bool texOom = false;
+static TexNode texSink;
+
+static void texResetPool() { texPoolUsed = 0; texOom = false; }
 
 static TexNode* texAlloc() {
-  static TexNode pool[220];
-  if (texPoolUsed >= 220) texPoolUsed = 0;   // защита: очень длинная формула
-  TexNode* n = &pool[texPoolUsed++];
-  n->type = TexNode::TEXT; n->text = nullptr; n->len = 0;
-  n->a = n->b = n->c = n->next = nullptr;    // ОБЯЗАТЕЛЬНО обнуляем: нода переиспользуется
+  TexNode* n;
+  if (texPoolUsed >= TEX_POOL) { texOom = true; n = &texSink; }   // страница не будет рисоваться
+  else n = &texPool[texPoolUsed++];
+  memset(n, 0, sizeof(TexNode));
   return n;
 }
+static TexNode* texMakeText(const char* s, uint8_t l) {
+  TexNode* n = texAlloc(); n->type = T_TEXT; n->text = s; n->len = l; return n;
+}
+static TexNode* texMakeSpace(uint8_t w) {
+  TexNode* n = texAlloc(); n->type = T_SPACE; n->len = w; return n;
+}
 
+// ------------------ таблицы команд ------------------
+static inline bool texIs(const char* s, uint8_t l, const char* n) { return strlen(n) == l && !strncmp(s, n, l); }
 static const char* texSkipWs(const char* p) { while (*p == ' ' || *p == '\t') p++; return p; }
 
-static TexNode* texMakeText(const char* s, uint8_t l) {
-  TexNode* n = texAlloc();
-  n->type = TexNode::TEXT; n->text = s; n->len = l;
-  return n;
-}
-
-struct TexSym { const char* cmd; const char* repl; };
-static const TexSym texSyms[] = {
-  // --- греки (строчные) ---
-  {"alpha", "a"}, {"beta", "b"}, {"gamma", "g"}, {"delta", "d"},
-  {"epsilon", "e"}, {"varepsilon", "e"}, {"zeta", "z"}, {"eta", "et"},
-  {"theta", "th"}, {"vartheta", "th"}, {"iota", "i"}, {"kappa", "k"},
-  {"lambda", "l"}, {"mu", "m"}, {"nu", "n"}, {"xi", "x"},
-  {"omicron", "o"}, {"pi", "p"}, {"rho", "r"}, {"sigma", "s"},
-  {"tau", "t"}, {"upsilon", "u"}, {"phi", "f"}, {"varphi", "f"},
-  {"chi", "ch"}, {"psi", "ps"}, {"omega", "w"},
-  // --- греки (заглавные) ---
-  {"Gamma", "G"}, {"Delta", "D"}, {"Theta", "Th"}, {"Lambda", "L"},
-  {"Xi", "X"}, {"Pi", "P"}, {"Sigma", "S"}, {"Upsilon", "U"},
-  {"Phi", "F"}, {"Psi", "Ps"}, {"Omega", "W"},
-  // --- бинарные операторы ---
-  {"cdot", "."}, {"cdotp", "."}, {"times", "x"}, {"div", "/"},
-  {"pm", "+-"}, {"mp", "-+"}, {"ast", "*"}, {"star", "*"}, {"circ", "o"},
-  {"bullet", "*"}, {"oplus", "(+)"}, {"ominus", "(-)"}, {"otimes", "(x)"},
-  {"oslash", "(/)"}, {"odot", "(.)"}, {"setminus", "\\"},
-  // --- отношения ---
-  {"leq", "<="}, {"le", "<="}, {"geq", ">="}, {"ge", ">="},
-  {"neq", "!="}, {"ne", "!="}, {"approx", "~="}, {"equiv", "=="},
-  {"sim", "~"}, {"simeq", "~~"}, {"cong", "=="}, {"propto", "PP"},
-  {"perp", "|_"}, {"parallel", "//"}, {"ll", "<<"}, {"gg", ">>"},
-  {"prec", "<"}, {"succ", ">"}, {"triangleq", "=^"},
-  // --- множества / логика ---
-  {"in", "IN"}, {"notin", "!IN"}, {"ni", "NI"}, {"subset", "(="},
-  {"subseteq", "(=)"}, {"supset", "=>"}, {"supseteq", "=)"},
-  {"cup", "U"}, {"cap", "n"}, {"forall", "FA"}, {"exists", "EX"},
-  {"neg", "!"}, {"land", "&"}, {"lor", "V"}, {"emptyset", "EM"},
-  {"varnothing", "EM"}, {"therefore", "TF"}, {"because", "BQ"},
-  // --- спецсимволы ---
-  {"infty", "INF"}, {"partial", "PD"}, {"nabla", "V="}, {"hbar", "HB"},
-  {"ell", "E"}, {"Re", "R"}, {"Im", "I"}, {"aleph", "A"},
-  {"angle", "<>"}, {"degree", "DG"}, {"surd", "SQ"}, {"square", "[]"},
-  {"checkmark", "OK"}, {"backslash", "\\"}, {"vert", "|"}, {"Vert", "||"},
-  {"langle", "<"}, {"rangle", ">"}, {"lbrace", "{"}, {"rbrace", "}"},
-  {"dots", "..."}, {"ldots", "..."}, {"cdots", "..."}, {"vdots", "::"},
-  {"ddots", "D::"}, {"prime", "'"},
-  // --- стрелки ---
-  {"to", "->"}, {"rightarrow", "->"}, {"longrightarrow", "-->"},
-  {"leftarrow", "<-"}, {"gets", "<-"}, {"leftrightarrow", "<->"},
-  {"Rightarrow", "=>"}, {"Leftarrow", "<="},
-  {"Leftrightarrow", "<=>"}, {"mapsto", "|->"},
-  {"uparrow", "UP"}, {"downarrow", "DN"}, {"nearrow", "NE"},
-  {"searrow", "SE"}, {"hookrightarrow", "->"}, {"iff", "<=>"},
-  // --- крупные операторы (обрабатываются отдельно, заглушки) ---
-  {"int", ""}, {"iint", ""}, {"iiint", ""}, {"oint", ""},
-  {"sum", ""}, {"prod", ""}, {"bigcup", ""}, {"bigcap", ""},
-  {"lim", ""}, {"limsup", ""}, {"liminf", ""},
-  // --- spacing (дополнительно) ---
-  {"quad", "  "}, {"qquad", "    "},
-  {"hspace", "~"}, {"kern", "~"},
-
+struct TexAlias { const char* from; const char* to; };
+static const TexAlias texAliases[] = {
+  {"varepsilon","epsilon"}, {"vartheta","theta"}, {"varphi","phi"}, {"varrho","rho"},
+  {"varsigma","sigma"}, {"varpi","pi"},
+  {"le","leq"}, {"ge","geq"}, {"ne","neq"}, {"simeq","sim"}, {"cong","equiv"},
+  {"rightarrow","to"}, {"longrightarrow","to"}, {"hookrightarrow","to"},
+  {"gets","leftarrow"}, {"longleftarrow","leftarrow"},
+  {"Longrightarrow","Rightarrow"}, {"implies","Rightarrow"},
+  {"iff","Leftrightarrow"}, {"Longleftrightarrow","Leftrightarrow"},
+  {"owns","ni"}, {"wedge","land"}, {"vee","lor"}, {"lnot","neg"},
+  {"varnothing","emptyset"}, {"oslash","emptyset"}, {"bot","perp"},
+  {"bullet","cdot"}, {"cdotp","cdot"}, {"centerdot","cdot"}, {"hslash","hbar"},
+  {"Box","square"}, {"blacksquare","square"}, {"textdegree","degree"},
+};
+struct TexAscii { const char* cmd; const char* txt; };
+static const TexAscii texAscii[] = {
+  {"Upsilon","Y"}, {"omicron","o"}, {"Re","Re"}, {"Im","Im"},
+  {"langle","<"}, {"rangle",">"}, {"lbrace","{"}, {"rbrace","}"},
+  {"lbrack","["}, {"rbrack","]"}, {"vert","|"}, {"lvert","|"}, {"rvert","|"},
+  {"mid","|"}, {"Vert","||"}, {"backslash","\\"}, {"setminus","\\"}, {"prime","'"},
+  {"ldots","..."}, {"dots","..."}, {"colon",":"}, {"ast","*"}, {"star","*"},
+  {"prec","<"}, {"succ",">"}, {"dagger","+"}, {"imath","i"}, {"jmath","j"},
+  {"triangleq","="},
+};
+static const char* const texLimFns[] = {"lim","limsup","liminf","max","min","sup","inf","det","gcd","Pr"};
+static const char* const texFns[] = {
+  "sin","cos","tan","cot","sec","csc","arcsin","arccos","arctan","sinh","cosh","tanh",
+  "coth","log","ln","lg","exp","deg","dim","ker","arg","mod","hom"
 };
 
-// известные текстовые команды-функции (печатаются своим именем)
-static bool texIsFunc(const char* s, uint8_t l) {
-  static const char* fns[] = {
-    "sin","cos","tan","cot","sec","csc","arcsin","arccos","arctan",
-    "sinh","cosh","tanh","log","ln","exp","max","min","sup","inf",
-    "det","dim","ker","deg","gcd","arg","mod","Pr"
-  };
-  for (auto f : fns) if (strlen(f) == l && !strncmp(s, f, l)) return true;
-  return false;
+static int8_t texBigOpKind(const char* s, uint8_t l) {
+  static const char* const nm[] = {"int","iint","iiint","oint","sum","prod","bigcup","bigcap"};
+  for (uint8_t i = 0; i < 8; i++) if (texIs(s, l, nm[i])) return i;
+  if (texIs(s, l, "coprod")) return 5;
+  return -1;
+}
+// виды акцентов: 0 vec,1 hat,2 bar,3 dot,4 ddot,5 tilde,6 acute,7 grave,8 check,9 underline
+static int8_t texAccentKind(const char* s, uint8_t l) {
+  static const char* const nm[] = {"vec","hat","bar","dot","ddot","tilde","acute","grave","check","underline"};
+  for (uint8_t i = 0; i < 10; i++) if (texIs(s, l, nm[i])) return i;
+  if (texIs(s, l, "widehat")) return 1;
+  if (texIs(s, l, "overline")) return 2;
+  if (texIs(s, l, "widetilde")) return 5;
+  if (texIs(s, l, "overrightarrow") || texIs(s, l, "overleftarrow")) return 0;
+  return -1;
 }
 
-static void texAppendChar(char* buf, uint8_t& i, char c) { if (i < TEX_LINE_LEN - 1) buf[i++] = c; }
+// ------------------ парсер ------------------
+// "сырой" текст в {...}: пробелы сохраняются (\text{sum of terms})
+static TexNode* texParseRaw(const char*& p) {
+  p = texSkipWs(p);
+  if (*p == '{') {
+    const char* s = ++p;
+    uint8_t depth = 1;
+    while (*p) {
+      if (*p == '{') depth++;
+      else if (*p == '}') { if (--depth == 0) break; }
+      p++;
+    }
+    uint16_t len = p - s; if (len > 120) len = 120;
+    if (*p == '}') p++;
+    return texMakeText(s, len);
+  }
+  if (*p) { TexNode* t = texMakeText(p, 1); p++; return t; }
+  return nullptr;
+}
 
-// ---------------- парсер ----------------
-static TexNode* texParseSeq(const char*& p, char terminator) {
-  TexNode* head = nullptr, *tail = nullptr;
-  while (*p && *p != terminator) {
+static void texSkipArg(const char*& p) {
+  p = texSkipWs(p);
+  if (*p == '{') { int d = 0; while (*p) { if (*p == '{') d++; else if (*p == '}' && --d == 0) { p++; break; } p++; } }
+}
+
+// аргумент: {группа}, одна команда или один символ
+static TexNode* texParseGroup(const char*& p) {
+  p = texSkipWs(p);
+  if (*p == '{') { p++; TexNode* g = texParseSeq(p, '}'); if (*p == '}') p++; return g; }
+  if (*p == '\\') { p++; return texParseCmd(p); }
+  if (*p) { TexNode* t = texMakeText(p, 1); p++; return t; }
+  return nullptr;
+}
+
+// p указывает на символ после '\'. Возвращает ноду или nullptr (команда пропущена)
+static TexNode* texParseCmd(const char*& p) {
+  if (!*p) return nullptr;
+  if (!isalpha((uint8_t)*p)) {                       // \, \; \{ \% \\ ...
+    char ch = *p++;
+    switch (ch) {
+      case ',': return texMakeSpace(2);
+      case ':': return texMakeSpace(3);
+      case ';': return texMakeSpace(4);
+      case ' ': return texMakeSpace(3);
+      case '!': return nullptr;
+      case '\\': return texMakeSpace(4);
+      case '|': return texMakeText("||", 2);
+      default: return texMakeText(p - 1, 1);
+    }
+  }
+  const char* s = p;
+  while (isalpha((uint8_t)*p)) p++;
+  uint8_t l = (p - s > 40) ? 40 : (uint8_t)(p - s);
+  TexNode* n;
+#define IS(x) texIs(s, l, x)
+
+  if (IS("frac") || IS("dfrac") || IS("tfrac") || IS("cfrac")) {
+    n = texAlloc(); n->type = T_FRAC;
+    n->a = texParseGroup(p); n->b = texParseGroup(p); return n;
+  }
+  if (IS("binom") || IS("dbinom") || IS("tbinom")) {
+    n = texAlloc(); n->type = T_FRAC; n->flags = F_BINOM;
+    n->a = texParseGroup(p); n->b = texParseGroup(p); return n;
+  }
+  if (IS("sqrt")) {
+    n = texAlloc(); n->type = T_SQRT;
     p = texSkipWs(p);
-    if (!*p || *p == terminator) break;
-    TexNode* node = nullptr;
+    if (*p == '[') { p++; n->c = texParseSeq(p, ']'); if (*p == ']') p++; }
+    n->a = texParseGroup(p); return n;
+  }
+  int8_t k = texBigOpKind(s, l);
+  if (k >= 0) {
+    n = texAlloc(); n->type = T_BIGOP; n->len = k;
+    if (k >= 4) n->flags = F_LIMITS;                 // sum prod cup cap - пределы сверху/снизу
+    return n;
+  }
+  k = texAccentKind(s, l);
+  if (k >= 0) { n = texAlloc(); n->type = T_ACCENT; n->len = k; n->a = texParseGroup(p); return n; }
+  if (IS("underbrace") || IS("overbrace")) {
+    n = texAlloc(); n->type = T_BRACE; n->flags = F_LIMITS | (IS("overbrace") ? F_OVER : 0);
+    n->a = texParseGroup(p); return n;
+  }
+  if (IS("stackrel") || IS("overset") || IS("underset")) {
+    n = texAlloc(); n->type = T_GROUP; n->flags = F_LIMITS;
+    TexNode* lab = texParseGroup(p);
+    n->a = texParseGroup(p);
+    if (IS("underset")) n->sub = lab; else n->sup = lab;
+    return n;
+  }
+  if (IS("text") || IS("mathrm") || IS("textrm") || IS("mbox") || IS("textit") ||
+      IS("textsf") || IS("texttt") || IS("mathsf") || IS("mathtt")) return texParseRaw(p);
+  if (IS("operatorname")) { n = texParseRaw(p); if (n) n->flags |= F_FUNC; return n; }
+  if (IS("mathbf") || IS("textbf") || IS("boldsymbol") || IS("bm") || IS("mathit") ||
+      IS("mathcal") || IS("mathbb") || IS("mathfrak")) {
+    n = texAlloc(); n->type = T_GROUP; n->a = texParseGroup(p); return n;
+  }
+  if (IS("left") || IS("right") || IS("big") || IS("Big") || IS("bigg") || IS("Bigg") ||
+      IS("bigl") || IS("bigr") || IS("Bigl") || IS("Bigr") || IS("biggl") || IS("biggr") ||
+      IS("Biggl") || IS("Biggr")) {
+    if (*p == '.') p++;                              // \left. \right.
+    return nullptr;
+  }
+  if (IS("begin") || IS("end") || IS("label") || IS("section") || IS("subsection") ||
+      IS("tag") || IS("title") || IS("hspace") || IS("vspace") || IS("kern")) { texSkipArg(p); return nullptr; }
+  if (IS("nonumber") || IS("notag") || IS("displaystyle") || IS("textstyle") ||
+      IS("scriptstyle") || IS("limits") || IS("nolimits") || IS("protect")) return nullptr;
+  if (IS("quad")) return texMakeSpace(8);
+  if (IS("qquad")) return texMakeSpace(16);
+  if (IS("enspace")) return texMakeSpace(4);
 
-    if (*p == '{') {
+  for (uint8_t i = 0; i < sizeof(texLimFns) / sizeof(texLimFns[0]); i++)
+    if (IS(texLimFns[i])) { n = texMakeText(s, l); n->flags = F_LIMITS | F_FUNC; return n; }
+  for (uint8_t i = 0; i < sizeof(texFns) / sizeof(texFns[0]); i++)
+    if (IS(texFns[i])) { n = texMakeText(s, l); n->flags = F_FUNC; return n; }
+#undef IS
+
+  for (auto& al : texAliases) if (texIs(s, l, al.from)) { s = al.to; l = strlen(al.to); break; }
+  for (auto& g : texGlyphs) {
+    if (texIs(s, l, g.cmd)) {
+      n = texAlloc(); n->type = T_SYM; n->text = g.px; n->flags = g.pad ? F_PAD : 0; return n;
+    }
+  }
+  for (auto& as : texAscii) if (texIs(s, l, as.cmd)) return texMakeText(as.txt, strlen(as.txt));
+  return texMakeText(s, l);                          // неизвестная команда - как текст
+}
+
+static TexNode* texParseSeq(const char*& p, char term) {
+  TexNode *head = nullptr, *tail = nullptr;
+  while (*p && *p != term && !texOom) {
+    p = texSkipWs(p);
+    if (!*p || *p == term) break;
+    TexNode* node = nullptr;
+    char ch = *p;
+    if (ch == '{') {
       p++;
       TexNode* g = texParseSeq(p, '}');
       if (*p == '}') p++;
-      node = texAlloc();               // группа-обёртка (рисуется inline)
-      node->type = TexNode::OVER;
-      node->a = g;
-    } else if (*p == '\\') {
+      node = texAlloc(); node->type = T_GROUP; node->a = g;
+    } else if (ch == '}') {                          // лишняя скобка
+      p++; continue;
+    } else if (ch == '\\') {
       p++;
-      const char* cmdStart = p;
-      if (!isalpha((uint8_t)*p)) {     // экранированный символ (\% \& \$ ...)
-        if (*p) { node = texMakeText(p, 1); p++; }
-      } else {
-        while (isalpha((uint8_t)*p)) p++;
-        uint8_t cmdLen = p - cmdStart;
-        if ((cmdLen == 4 && !strncmp(cmdStart, "frac", 4)) ||
-            (cmdLen == 5 && !strncmp(cmdStart, "dfrac", 5))) {
-          node = texAlloc(); node->type = TexNode::FRAC;
-          p = texSkipWs(p); node->a = texParseGroup(p);
-          p = texSkipWs(p); node->b = texParseGroup(p);
-        } else if (cmdLen == 5 && !strncmp(cmdStart, "binom", 5)) {
-          node = texAlloc(); node->type = TexNode::FRAC;
-          node->text = "()"; node->len = 2;              // режим бинома: скобки вместо черты
-          p = texSkipWs(p); node->a = texParseGroup(p);
-          p = texSkipWs(p); node->b = texParseGroup(p);
-        } else if (cmdLen == 4 && !strncmp(cmdStart, "sqrt", 4)) {
-          node = texAlloc(); node->type = TexNode::SQRT;
-          p = texSkipWs(p);
-          if (*p == '[') {                                // \sqrt[n]{...}
-            p++;
-            TexNode* idx = texParseSeq(p, ']');
-            if (*p == ']') p++;
-            node->c = idx;
-          }
-          p = texSkipWs(p); node->a = texParseGroup(p);
-        } else if ((cmdLen >= 3 && cmdLen <= 6 &&
-                    (!strncmp(cmdStart, "int", 3) || !strncmp(cmdStart, "sum", 3) ||
-                     !strncmp(cmdStart, "prod", 4) || !strncmp(cmdStart, "oint", 4) ||
-                     !strncmp(cmdStart, "iint", 4) || !strncmp(cmdStart, "iiint", 5) ||
-                     !strncmp(cmdStart, "coprod", 6))) ||
-                   (cmdLen == 6 && (!strncmp(cmdStart, "bigcup", 6) ||
-                                    !strncmp(cmdStart, "bigcap", 6)))) {
-          node = texAlloc(); node->type = TexNode::BIGOP;
-          node->text = cmdStart; node->len = cmdLen;
-          p = texSkipWs(p);
-          while (*p == '_' || *p == '^') {                // пределы в любом порядке
-            char t = *p; p++;
-            TexNode* lim = texParseGroup(p);
-            if (t == '_') node->b = lim; else node->c = lim;
-            p = texSkipWs(p);
-          }
-          p = texSkipWs(p);
-          node->a = texParseGroup(p);                     // тело (опционально)
-        } else if ((cmdLen == 3 && !strncmp(cmdStart, "lim", 3)) ||
-                   (cmdLen == 6 && (!strncmp(cmdStart, "limsup", 6) ||
-                                    !strncmp(cmdStart, "liminf", 6)))) {
-          node = texAlloc(); node->type = TexNode::LIMIT;
-          node->text = cmdStart; node->len = cmdLen;
-          p = texSkipWs(p);
-          while (*p == '_' || *p == '^') {
-            char t = *p; p++;
-            TexNode* lim = texParseGroup(p);
-            if (t == '_') node->b = lim; else node->c = lim;
-            p = texSkipWs(p);
-          }
-          p = texSkipWs(p);
-          node->a = texParseGroup(p);
-        } else if (cmdLen >= 7 && !strncmp(cmdStart, "underbr", 7)) {
-          node = texAlloc(); node->type = TexNode::UNDER;
-          p = texSkipWs(p); node->a = texParseGroup(p);
-          p = texSkipWs(p);
-          if (*p == '_') { p++; node->b = texParseGroup(p); }
-        } else if (cmdLen >= 3 &&
-                   (!strncmp(cmdStart, "vec", 3) || !strncmp(cmdStart, "hat", 3) ||
-                    !strncmp(cmdStart, "bar", 3) || !strncmp(cmdStart, "dot", 3) ||
-                    !strncmp(cmdStart, "tilde", 5) || !strncmp(cmdStart, "acute", 5) ||
-                    !strncmp(cmdStart, "grave", 5) || !strncmp(cmdStart, "check", 5))) {
-          node = texAlloc(); node->type = TexNode::ACCENT;
-          node->text = cmdStart; node->len = cmdLen;
-          p = texSkipWs(p); node->a = texParseGroup(p);
-        } else if (!strncmp(cmdStart, "overline", cmdLen) ||
-                   !strncmp(cmdStart, "overrightarrow", cmdLen) ||
-                   !strncmp(cmdStart, "overbrace", cmdLen) ||
-                   !strncmp(cmdStart, "widetilde", cmdLen) ||
-                   !strncmp(cmdStart, "widehat", cmdLen)) {
-          node = texAlloc(); node->type = TexNode::ACCENT;
-          node->text = cmdStart; node->len = cmdLen;
-          p = texSkipWs(p); node->a = texParseGroup(p);
-        } else if (cmdLen == 8 && !strncmp(cmdStart, "stackrel", 8)) {
-          node = texAlloc(); node->type = TexNode::UNDER;   // подпись СВЕРХУ: переиспользуем UNDER
-          node->b = nullptr;                                // нижняя подпись отсутствует
-          p = texSkipWs(p); node->a = texParseGroup(p);     // основание
-          p = texSkipWs(p); node->c = texParseGroup(p);     // метка сверху
-        } else if (!strncmp(cmdStart, "textbf", cmdLen) || !strncmp(cmdStart, "mathbf", cmdLen) ||
-                   !strncmp(cmdStart, "boldsymbol", cmdLen)) {
-          p = texSkipWs(p);
-          node = texParseGroup(p);                        // жирность не эмулируем - содержимое
-        } else if (!strncmp(cmdStart, "text", cmdLen) || !strncmp(cmdStart, "mathrm", cmdLen) ||
-                   !strncmp(cmdStart, "mathit", cmdLen) || !strncmp(cmdStart, "mbox", cmdLen) ||
-                   !strncmp(cmdStart, "operatorname", cmdLen)) {
-          p = texSkipWs(p);
-          node = texParseGroup(p);                        // содержимое как обычный текст
-        } else if (!strncmp(cmdStart, "left", cmdLen) || !strncmp(cmdStart, "right", cmdLen) ||
-                   !strncmp(cmdStart, "bigg", cmdLen) || !strncmp(cmdStart, "Bigg", cmdLen) ||
-                   !strncmp(cmdStart, "big", cmdLen) || !strncmp(cmdStart, "Big", cmdLen)) {
-          continue;                                       // пропускаем: дальше обычная скобка
-        } else if (!strncmp(cmdStart, "begin", cmdLen) || !strncmp(cmdStart, "end", cmdLen) ||
-                   !strncmp(cmdStart, "section", cmdLen) || !strncmp(cmdStart, "label", cmdLen) ||
-                   !strncmp(cmdStart, "nonumber", cmdLen)) {
-          p = texSkipWs(p);                               // съедаем аргумент {*}[..]
-          if (*p == '{') { p++; while (*p && *p != '}') p++; if (*p == '}') p++; }
-          if (*p == '[') { p++; while (*p && *p != ']') p++; if (*p == ']') p++; }
-          continue;
-        } else if (texIsFunc(cmdStart, cmdLen)) {
-          node = texMakeText(cmdStart, cmdLen);           // sin cos log ...
-        } else {
-          bool found = false;
-          for (auto& s : texSyms) {
-            if (strlen(s.cmd) == cmdLen && !strncmp(cmdStart, s.cmd, cmdLen)) {
-              if (s.repl && *s.repl) node = texMakeText(s.repl, strlen(s.repl));
-              else node = texMakeText(cmdStart, cmdLen);  // функции крупным планом
-              found = true; break;
-            }
-          }
-          if (!found) node = texMakeText(cmdStart, cmdLen);  // неизвестная команда - как текст
-        }
-      }
-    } else if (*p == '^' || *p == '_') {
-      char t = *p; p++;
+      node = texParseCmd(p);
+    } else if (ch == '^' || ch == '_') {
+      p++;
       TexNode* arg = texParseGroup(p);
-      node = texAlloc();
-      node->type = (t == '^') ? TexNode::SUP : TexNode::SUB;
-      node->a = arg;
-      if (tail && !tail->a) {            // привязать к предыдущей ноде (x^2 вместо x ^2)
-        tail->b = node;
-        p = texSkipWs(p);
-        while (*p == '^' || *p == '_') { // цепочка x_1^2
-          char t2 = *p; p++;
-          TexNode* nxt = texAlloc();
-          nxt->type = (t2 == '^') ? TexNode::SUP : TexNode::SUB;
-          nxt->a = texParseGroup(p);
-          node->next = nxt; node = nxt;
-          p = texSkipWs(p);
-        }
-      }
-    } else if (*p == '$') {
-      p++; continue;                                      // маркер формулы игнорируем
-    } else if (*p == '%') {
-      while (*p && *p != terminator) p++;                 // комментарий до конца строки
-      continue;
-    } else if (*p == '~' || *p == '&') {
-      p++; continue;                                      // пробел / разделитель колонок
+      if (!tail) { tail = head = texAlloc(); tail->type = T_GROUP; }   // пустое основание
+      TexNode** slot = (ch == '^') ? &tail->sup : &tail->sub;
+      if (!*slot) *slot = arg;
+      else if (arg) { TexNode* t = *slot; while (t->next) t = t->next; t->next = arg; }
+      continue;                                      // в список не добавляем
+    } else if (ch == '$') {
+      p++; continue;
+    } else if (ch == '%') {
+      while (*p) p++; continue;                      // комментарий до конца строки
+    } else if (ch == '~') {
+      p++; node = texMakeSpace(4);
+    } else if (ch == '&') {
+      p++; node = texMakeSpace(8);
     } else {
-      const char* start = p;
-      while (*p && !strchr("^_\\{}$%~& ", *p)) p++;
-      node = texMakeText(start, p - start);
+      const char* st = p;
+      while (*p && *p != term && !strchr("^_\\{}$%~& \t", *p) && (p - st) < 120) p++;
+      if (p == st) p++;                              // страховка от зацикливания
+      node = texMakeText(st, p - st);
     }
-
     if (node) {
-      if (tail) { tail->next = node; tail = node; }
-      else { head = tail = node; }
+      if (tail) tail->next = node; else head = node;
+      tail = node;
     }
   }
   return head;
 }
 
-// одна команда целиком (для аргументов вида \frac dx)
-static TexNode* texParseOneCmd(const char*& p) {
-  const char* save = p;               // на случай отката
-  TexNode* node = nullptr;
-  p++;                                // пропускаем '\'
-  if (!isalpha((uint8_t)*p)) {        // экранированный символ (\, \; \! \{ ...)
-    if (*p) { node = texMakeText(p, 1); p++; }
-    return node;
-  }
-  const char* cmdStart = p;
-  while (isalpha((uint8_t)*p)) p++;
-  uint8_t cmdLen = p - cmdStart;
-  if ((cmdLen == 4 && !strncmp(cmdStart, "frac", 4)) ||
-      (cmdLen == 5 && !strncmp(cmdStart, "dfrac", 5))) {
-    node = texAlloc(); node->type = TexNode::FRAC;
-    p = texSkipWs(p); node->a = texParseGroup(p);
-    p = texSkipWs(p); node->b = texParseGroup(p);
-  } else if (cmdLen == 5 && !strncmp(cmdStart, "binom", 5)) {
-    node = texAlloc(); node->type = TexNode::FRAC;
-    node->text = "()"; node->len = 2;
-    p = texSkipWs(p); node->a = texParseGroup(p);
-    p = texSkipWs(p); node->b = texParseGroup(p);
-  } else if (cmdLen == 4 && !strncmp(cmdStart, "sqrt", 4)) {
-    node = texAlloc(); node->type = TexNode::SQRT;
-    p = texSkipWs(p);
-    if (*p == '[') { p++; TexNode* idx = texParseSeq(p, ']'); if (*p == ']') p++; node->c = idx; }
-    p = texSkipWs(p); node->a = texParseGroup(p);
-  } else if ((cmdLen >= 3 && cmdLen <= 6 &&
-              (!strncmp(cmdStart, "int", 3) || !strncmp(cmdStart, "sum", 3) ||
-               !strncmp(cmdStart, "prod", 4) || !strncmp(cmdStart, "oint", 4) ||
-               !strncmp(cmdStart, "iint", 4) || !strncmp(cmdStart, "iiint", 5) ||
-               !strncmp(cmdStart, "coprod", 6))) ||
-             (cmdLen == 6 && (!strncmp(cmdStart, "bigcup", 6) ||
-                              !strncmp(cmdStart, "bigcap", 6)))) {
-    node = texAlloc(); node->type = TexNode::BIGOP;
-    node->text = cmdStart; node->len = cmdLen;
-    p = texSkipWs(p);
-    while (*p == '_' || *p == '^') {
-      char t = *p; p++;
-      TexNode* lim = texParseGroup(p);
-      if (t == '_') node->b = lim; else node->c = lim;
-      p = texSkipWs(p);
-    }
-  } else if ((cmdLen == 3 && !strncmp(cmdStart, "lim", 3)) ||
-             (cmdLen == 6 && (!strncmp(cmdStart, "limsup", 6) ||
-                              !strncmp(cmdStart, "liminf", 6)))) {
-    node = texAlloc(); node->type = TexNode::LIMIT;
-    node->text = cmdStart; node->len = cmdLen;
-    p = texSkipWs(p);
-    while (*p == '_' || *p == '^') {
-      char t = *p; p++;
-      TexNode* lim = texParseGroup(p);
-      if (t == '_') node->b = lim; else node->c = lim;
-      p = texSkipWs(p);
-    }
-  } else if (cmdLen >= 7 && !strncmp(cmdStart, "underbr", 7)) {
-    node = texAlloc(); node->type = TexNode::UNDER;
-    p = texSkipWs(p); node->a = texParseGroup(p);
-    p = texSkipWs(p);
-    if (*p == '_') { p++; node->b = texParseGroup(p); }
-  } else {
-    p = save;                         // простые команды - как обычный токен seq-парсера
-    return texParseSeq(p, '\0');
-  }
-  return node;
-}
-
-static TexNode* texParseGroup(const char*& p) {
-  p = texSkipWs(p);
-  if (*p == '{') { p++; TexNode* g = texParseSeq(p, '}'); if (*p == '}') p++; return g; }
-  if (*p == '\\') return texParseOneCmd(p);   // одиночная команда как аргумент (\frac dx)
-  if (*p) { const char* s = p; p++; return texMakeText(s, 1); }
-  return nullptr;
-}
-
-// ---------------- растризация ----------------
-// ПИКСЕЛЬНЫЙ ПОРЯДОК БУФЕРА GyverOLED_fix (столбцовый!):
-//   индекс = (y >> 3) + x * 8, бит = y & 7.
-// Раньше здесь использовался построчный порядок (y*16 + x/8) — из-за этого
-// картинка выводилась "кракозяброй". Теперь рисуем прямо во внутренний
-// буфер библиотеки через oled.dot() (он сам считает правильные индексы).
-static void texPix(int16_t x, int16_t y, bool on) {
+// ------------------ рисование примитивов ------------------
+static void texPix(int16_t x, int16_t y) {
   if (x < 0 || x > 127 || y < 0 || y > 63) return;
-  oled.dot(x, y, on ? 1 : 0);
+  oled.dot(x, y, 1);
 }
+static void texHLine(int16_t x0, int16_t x1, int16_t y) { for (int16_t x = x0; x <= x1; x++) texPix(x, y); }
+static void texVLine(int16_t x, int16_t y0, int16_t y1) { for (int16_t y = y0; y <= y1; y++) texPix(x, y); }
 
-static void texHLine(int16_t x0, int16_t x1, int16_t y) { for (int16_t x = x0; x <= x1; x++) texPix(x, y, 1); }
-static void texVLine(int16_t x, int16_t y0, int16_t y1) { for (int16_t y = y0; y <= y1; y++) texPix(x, y, 1); }
-
-// печать строки текста шрифтом 5x7 (baselineY - нижняя линия глифа)
-static void texPrint(const char* s, uint8_t l, int16_t x, int16_t baselineY) {
-  for (uint8_t i = 0; i < l; i++) {
-    int16_t idx = (uint8_t)s[i] - 32;
-    if (idx < 0 || idx >= 95) idx = '?' - 32;
-    for (uint8_t col = 0; col < 5; col++) {
-      uint8_t bits = pgm_read_byte(&texFont5x7[idx][col]);
-      for (uint8_t row = 0; row < 7; row++)
-        if (bits & (1 << row)) texPix(x + col, baselineY - 6 + row, 1);
-    }
-    x += 6;
+// 5x7: y - верхняя строка глифа (базовая линия = y+6, "хвосты" уходят на y+7)
+static void texChar5(char ch, int16_t x, int16_t y) {
+  int16_t idx = (uint8_t)ch - 32;
+  if (idx < 0 || idx >= 95) idx = '?' - 32;
+  for (uint8_t col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&texFont5x7[idx][col]);
+    for (uint8_t row = 0; row < 8; row++) if (bits & (1 << row)) texPix(x + col, y + row);
   }
 }
-
-// ширина списка нод в пикселях (глиф 5px + 1 межсимвольный)
-static int16_t texTextW(TexNode* n) {
-  int16_t w = 0;
-  for (TexNode* c = n; c; c = c->next) {
-    switch (c->type) {
-      case TexNode::OVER: w += texTextW(c->a) + texTextW(c->b); break;
-      case TexNode::TEXT: w += c->len * 6 + texTextW(c->b); break;
-      case TexNode::SUP: case TexNode::SUB: w += 6 + texTextW(c->a) + texTextW(c->b); break;
-      case TexNode::FRAC: {
-        int16_t m = max(texTextW(c->a), texTextW(c->b));
-        w += (c->text ? m + 8 : m + 2);                      // бином шире (скобки)
-        break;
-      }
-      case TexNode::SQRT: {
-        int16_t iw = c->c ? texTextW(c->c) : 0;
-        w += texTextW(c->a) + 6 + (iw ? iw + 2 : 0);
-        break;
-      }
-      case TexNode::BIGOP: {
-        int16_t body = texTextW(c->a);
-        int16_t lo = texTextW(c->b), hi = texTextW(c->c);
-        w += max(body, max(lo, hi)) + 10;
-        break;
-      }
-      case TexNode::LIMIT: {
-        int16_t name = c->len * 6;
-        w += max(name, max(texTextW(c->b), texTextW(c->a))) + 4;
-        break;
-      }
-      case TexNode::ACCENT: w += texTextW(c->a) + 2; break;
-      case TexNode::UNDER:
-        w += max(max(texTextW(c->a), texTextW(c->b)), texTextW(c->c)) + 2;
-        break;
-    }
-  }
-  return w;
+// 3x5: y - верхняя строка глифа
+static void texChar3(char ch, int16_t x, int16_t y) {
+  uint16_t g = texGlyph3(ch);
+  for (uint8_t r = 0; r < 5; r++)
+    for (uint8_t c = 0; c < 3; c++)
+      if ((g >> (14 - 3 * r - c)) & 1) texPix(x + c, y + r);
 }
 
-// рисует список нод; baselineY - линия базового текста; возвращает итоговую ширину
-static int16_t texDraw(TexNode* n, int16_t x, int16_t baselineY) {
-  int16_t startX = x;
+// ------------------ раскладка и рисование ------------------
+// texLay - список нод слева направо. draw=false - только измерить (тот же код, что и рисует).
+static TexBox texLay(TexNode* n, int16_t x, int16_t base, uint8_t lvl, bool draw) {
+  TexBox r = {0, 0, 0};
+  bool opnd = false;                                  // предыдущая нода - операнд (для унарного минуса)
   for (TexNode* c = n; c; c = c->next) {
-    if (c->type == TexNode::SUP || c->type == TexNode::SUB) {
-      int16_t yy = (c->type == TexNode::SUP) ? baselineY - 4 : baselineY + 3;
-      x += texDraw(c->a, x, yy);
-      x += texDraw(c->b, x, yy);               // привязанная цепочка x_1^2
-      continue;
+    TexBox b = texAtom(c, x + r.w, base, lvl, draw, opnd);
+    r.w += b.w;
+    if (b.up > r.up) r.up = b.up;
+    if (b.dn > r.dn) r.dn = b.dn;
+  }
+  return r;
+}
+
+// нода + её степень/индекс (сбоку или как пределы)
+static TexBox texAtom(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd) {
+  if (!c->sup && !c->sub) {
+    bool o = opnd;
+    TexBox b = texCore(c, x, base, lvl, draw, o);
+    opnd = o;
+    return b;
+  }
+  bool o1 = opnd;
+  TexBox cb = texCore(c, x, base, lvl, false, o1);
+  TexBox S = {0, 0, 0}, U = {0, 0, 0};
+  if (c->sup) S = texLay(c->sup, 0, 0, 1, false);
+  if (c->sub) U = texLay(c->sub, 0, 0, 1, false);
+  TexBox r;
+
+  if (c->flags & F_LIMITS) {                          // пределы по центру сверху/снизу
+    int16_t W = max(cb.w, max(S.w, U.w));
+    int16_t ox = (W - cb.w) / 2, sx = (W - S.w) / 2, ux = (W - U.w) / 2;
+    int16_t supBase = base - cb.up - 2 - S.dn;
+    int16_t subBase = base + cb.dn + 2 + U.up;
+    if (draw) {
+      bool o2 = opnd;
+      texCore(c, x + ox, base, lvl, true, o2);
+      if (c->sup) texLay(c->sup, x + sx, supBase, 1, true);
+      if (c->sub) texLay(c->sub, x + ux, subBase, 1, true);
     }
-    if (c->type == TexNode::OVER) {            // группа {..} - inline
-      x += texDraw(c->a, x, baselineY);
-      x += texDraw(c->b, x, baselineY);        // привязанные индекс/степень
-      continue;
+    r.w = W;
+    r.up = c->sup ? base - (supBase - S.up) : cb.up;
+    r.dn = c->sub ? (subBase + U.dn - base) : cb.dn;
+  } else {                                            // x_1^2: сбоку, друг над другом
+    int16_t fs = ((c->flags & F_FUNC) && c->type == T_TEXT) ? 2 : 0;   // без пробела после sin^2
+    int16_t supShift = lvl ? max<int16_t>(3, cb.up - 3) : max<int16_t>(4, cb.up - 4);
+    int16_t subShift = (lvl ? 2 : 3) + max<int16_t>(0, cb.dn - 1);
+    int16_t supBase = base - supShift, subBase = base + subShift;
+    if (c->sup && c->sub) {
+      int16_t gap = (subBase - U.up) - (supBase + S.dn);
+      if (gap < 2) subBase += (2 - gap);
     }
-    switch (c->type) {
-      case TexNode::TEXT: {
-        texPrint(c->text, c->len, x, baselineY);
-        x += c->len * 6;
-        x += texDraw(c->b, x, baselineY);      // привязанный sup/sub (e^{i\pi})
-        break;
+    int16_t sx = x + cb.w - fs;
+    if (draw) {
+      bool o2 = opnd;
+      texCore(c, x, base, lvl, true, o2);
+      if (c->sup) texLay(c->sup, sx, supBase, 1, true);
+      if (c->sub) texLay(c->sub, sx, subBase, 1, true);
+    }
+    r.w = cb.w - fs + max(S.w, U.w) + fs;
+    r.up = max<int16_t>(cb.up, c->sup ? base - (supBase - S.up) : 0);
+    r.dn = max<int16_t>(cb.dn, c->sub ? (subBase + U.dn - base) : 0);
+  }
+  opnd = o1;
+  return r;
+}
+
+// ядро ноды без степеней. base - базовая линия (нижняя строка заглавных букв)
+static TexBox texCore(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd) {
+  TexBox r = {0, 0, 0};
+  switch (c->type) {
+
+    case T_TEXT: {
+      const int16_t adv = lvl ? 4 : 6;
+      bool o = opnd, xh = true, desc = false;
+      int16_t cx = x;
+      for (uint8_t i = 0; i < c->len; i++) {
+        char ch = c->text[i];
+        bool rel = (ch == '=' || ch == '<' || ch == '>');
+        bool bin = ((ch == '+' || ch == '-') && o);   // бинарный +/- ; унарный - без пробелов
+        int16_t pd = (rel || bin) ? 1 : 0;
+        if (draw) { if (lvl) texChar3(ch, cx + pd, base - 4); else texChar5(ch, cx + pd, base - 6); }
+        cx += adv + 2 * pd;
+        if (!strchr("acemnorsuvwxz .:,'-+=<>", ch)) xh = false;
+        if (strchr("gjpqy,;", ch)) desc = true;
+        o = isalnum((uint8_t)ch) || ch == ')' || ch == ']' || ch == '!' || ch == '\'';
       }
-      case TexNode::FRAC: {
-        int16_t wa = texTextW(c->a), wb = texTextW(c->b);
-        int16_t w = max(wa, wb);
-        if (c->text) {                                 // \binom: скобки, без черты
-          texVLine(x + 1, baselineY - 6, baselineY + 6);
-          texPix(x, baselineY - 6, 1); texPix(x, baselineY + 6, 1);
-          texDraw(c->a, x + 4, baselineY - 4);
-          texDraw(c->b, x + 4, baselineY + 4);
-          int16_t sx = x + 4 + w + 1;
-          texVLine(sx - 1, baselineY - 6, baselineY + 6);
-          texPix(sx, baselineY - 6, 1); texPix(sx, baselineY + 6, 1);
-          x += w + 8;
-        } else {
-          texDraw(c->a, x + (w - wa) / 2, baselineY - 4);   // числитель
-          texHLine(x, x + w + 1, baselineY + 1);            // черта дроби
-          texDraw(c->b, x + (w - wb) / 2, baselineY + 8);   // знаменатель
-          x += w + 2;
-        }
-        break;
+      r.w = cx - x + ((c->flags & F_FUNC) ? 2 : 0);
+      r.up = lvl ? 4 : (xh ? 4 : 6);
+      r.dn = (!lvl && desc) ? 1 : 0;
+      opnd = (c->flags & F_FUNC) ? false : o;
+      break;
+    }
+
+    case T_SYM: {
+      int16_t pd = (c->flags & F_PAD) ? 1 : 0;
+      int8_t first = -1, last = -1;
+      for (uint8_t i = 0; i < 40; i++) if (c->text[i] == '#') { int8_t row = i / 5; if (first < 0) first = row; last = row; }
+      if (draw) for (uint8_t i = 0; i < 40; i++) if (c->text[i] == '#') texPix(x + pd + i % 5, base - 6 + i / 5);
+      r.w = 6 + 2 * pd;
+      r.up = (first < 0) ? 0 : max<int16_t>(0, 6 - first);
+      r.dn = (last >= 7) ? 1 : 0;
+      opnd = (pd == 0);
+      break;
+    }
+
+    case T_SPACE:
+      r.w = c->len;
+      break;
+
+    case T_GROUP:
+      r = texLay(c->a, x, base, lvl, draw);
+      opnd = true;
+      break;
+
+    case T_FRAC: {
+      TexBox A = texLay(c->a, 0, 0, lvl, false), B = texLay(c->b, 0, 0, lvl, false);
+      bool bin = c->flags & F_BINOM;
+      int16_t wa = A.w > 0 ? A.w - 1 : 0, wb = B.w > 0 ? B.w - 1 : 0;
+      int16_t mv = max(wa, wb);
+      int16_t barY = base - (lvl ? 2 : 3);
+      int16_t g = bin ? 1 : 2;
+      int16_t nb = barY - g - A.dn, db = barY + g + B.up;
+      int16_t topY = nb - A.up, botY = db + B.dn;
+      int16_t off = bin ? 4 : 1;
+      if (draw) {
+        texLay(c->a, x + off + (mv - wa) / 2, nb, lvl, true);
+        texLay(c->b, x + off + (mv - wb) / 2, db, lvl, true);
+        if (bin) {                                    // скобки по высоте блока
+          int16_t xr = x + mv + 5;
+          texVLine(x + 1, topY, botY); texPix(x + 2, topY); texPix(x + 2, botY);
+          texVLine(xr + 1, topY, botY); texPix(xr, topY); texPix(xr, botY);
+        } else texHLine(x, x + mv + 1, barY);
       }
-      case TexNode::SQRT: {
-        int16_t w = texTextW(c->a);
-        int16_t xo = x;
-        if (c->c) {                                    // индекс корня (n-я степень)
-          texDraw(c->c, x, baselineY - 5);
-          xo += texTextW(c->c) + 1;
-        }
-        texPix(xo, baselineY - 3, 1);
-        texPix(xo + 1, baselineY - 1, 1);
-        texPix(xo + 2, baselineY + 1, 1);
-        texPix(xo + 3, baselineY - 1, 1);
-        texPix(xo + 4, baselineY - 3, 1);
-        texHLine(xo + 4, xo + 4 + w, baselineY - 7);   // перекладина
-        texDraw(c->a, xo + 5, baselineY);
-        x = xo + w + 6;
-        break;
+      r.w = bin ? mv + 8 : mv + 3;
+      r.up = base - topY; r.dn = botY - base;
+      opnd = true;
+      break;
+    }
+
+    case T_SQRT: {
+      TexBox Bd = texLay(c->a, 0, 0, lvl, false);
+      TexBox I = {0, 0, 0};
+      if (c->c) I = texLay(c->c, 0, 0, 1, false);
+      int16_t iw = c->c ? I.w : 0;
+      int16_t xo = x + iw;
+      int16_t yt = base - Bd.up - 2, yb = base + Bd.dn;
+      int16_t h = yb - yt; if (h < 4) h = 4;
+      if (draw) {
+        texPix(xo, yb - 2); texPix(xo + 1, yb - 1);
+        for (int16_t y = yb; y >= yt; y--) texPix(xo + 2 + ((yb - y) * 3) / h, y);
+        texHLine(xo + 5, xo + 6 + Bd.w, yt);
+        texLay(c->a, xo + 7, base, lvl, true);
+        if (c->c) texLay(c->c, x, yb - 4 - I.dn, 1, true);
       }
-      case TexNode::BIGOP: {
-        const char* sym = "SUM";
-        if (c->len == 3 && !strncmp(c->text, "int", 3)) sym = "INT";
-        else if (c->len == 4 && !strncmp(c->text, "iint", 4)) sym = "IIN";
-        else if (c->len == 5 && !strncmp(c->text, "iiint", 5)) sym = "III";
-        else if (c->len == 4 && !strncmp(c->text, "oint", 4)) sym = "CNT";
-        else if (c->len == 4 && !strncmp(c->text, "prod", 4)) sym = "PRD";
-        else if (c->len == 6 && !strncmp(c->text, "bigcup", 6)) sym = "UUN";
-        else if (c->len == 6 && !strncmp(c->text, "bigcap", 6)) sym = "NNA";
-        int16_t bw = strlen(sym) * 6;
-        int16_t bodyW = texTextW(c->a);
-        int16_t loW = texTextW(c->b), hiW = texTextW(c->c);
-        int16_t w = max(bodyW, max(max(bw, loW), hiW));
-        bool isInt = !strcmp(sym, "INT") || !strcmp(sym, "IIN") || !strcmp(sym, "III") || !strcmp(sym, "CNT");
+      r.w = iw + 7 + Bd.w;
+      r.up = Bd.up + 2;
+      if (c->c) r.up = max<int16_t>(r.up, base - (yb - 4 - I.dn - I.up));
+      r.dn = Bd.dn;
+      opnd = true;
+      break;
+    }
+
+    case T_BIGOP: {
+      uint8_t k = c->len;                             // 0 int,1 iint,2 iiint,3 oint,4 sum,5 prod,6 cup,7 cap
+      bool isInt = (k <= 3);
+      int16_t gw = isInt ? (k == 1 ? 10 : (k == 2 ? 14 : 6)) : 9;
+      r.up = (k >= 6) ? 8 : 9;
+      r.dn = (k >= 6) ? 2 : 3;
+      r.w = gw + 1;
+      if (draw) {
+        int16_t y0 = base - r.up;
         if (isInt) {
-          // стилизованный знак интеграла: S-образная вертикальная черта
-          int16_t ix = x + 2;
-          int8_t rep = 1;
-          if (!strcmp(sym, "IIN")) rep = 2;
-          if (!strcmp(sym, "III")) rep = 3;
-          for (int8_t r = 0; r < rep; r++) {
-            for (int16_t k = 0; k < 14; k++) {
-              int16_t xx = ix + r * 6 + (k < 3 ? (2 - k) : (k > 11 ? (k - 11) : 0));
-              texPix(xx, baselineY + 7 - k, 1);
-            }
-            texPix(ix + r * 6 + 2, baselineY + 7, 1);
-            texPix(ix + r * 6 + 1, baselineY - 7, 1);
+          uint8_t copies = (k == 1) ? 2 : (k == 2 ? 3 : 1);
+          for (uint8_t i = 0; i < copies; i++) {
+            int16_t ox = x + 4 * i;
+            texVLine(ox + 3, y0 + 1, y0 + 11);
+            texPix(ox + 4, y0); texPix(ox + 5, y0 + 1);
+            texPix(ox + 2, y0 + 12); texPix(ox + 1, y0 + 11);
           }
-          if (!strcmp(sym, "CNT")) {                   // контурный интеграл: окружность
-            static const int8_t cx[] = {2, 1, 0, -1, -2, -1, 0, 1};
-            static const int8_t cy[] = {0, -1, -2, -1, 0, 1, 2, 1};
-            for (int8_t a = 0; a < 8; a++) texPix(x + 3 + cx[a], baselineY + cy[a], 1);
+          if (k == 3) {                               // кружок на контурном интеграле
+            static const int8_t rx[8] = {3, 4, 5, 4, 3, 2, 1, 2};
+            static const int8_t ry[8] = {4, 5, 6, 7, 8, 7, 6, 5};
+            for (uint8_t i = 0; i < 8; i++) texPix(x + rx[i], y0 + ry[i]);
           }
-          bw = 6 + rep * 6;
-        } else {
-          TexNode* op = texMakeText(sym, strlen(sym));
-          texDraw(op, x, baselineY);
+        } else if (k == 4) {                          // сумма
+          texHLine(x, x + 8, y0); texHLine(x, x + 8, y0 + 12);
+          texPix(x + 8, y0 + 1); texPix(x + 8, y0 + 11);
+          for (int16_t i = 0; i <= 5; i++) texPix(x + i, y0 + 1 + i);
+          for (int16_t i = 1; i <= 5; i++) texPix(x + 5 - i, y0 + 6 + i);
+        } else if (k == 5) {                          // произведение
+          texHLine(x, x + 8, y0);
+          texVLine(x + 1, y0 + 1, y0 + 12); texVLine(x + 7, y0 + 1, y0 + 12);
+          texPix(x, y0 + 12); texPix(x + 8, y0 + 12);
+        } else if (k == 6) {                          // объединение
+          texVLine(x, y0, y0 + 8); texVLine(x + 8, y0, y0 + 8);
+          texPix(x + 1, y0 + 9); texPix(x + 7, y0 + 9); texHLine(x + 2, x + 6, y0 + 10);
+        } else {                                      // пересечение
+          texHLine(x + 2, x + 6, y0); texPix(x + 1, y0 + 1); texPix(x + 7, y0 + 1);
+          texVLine(x, y0 + 2, y0 + 10); texVLine(x + 8, y0 + 2, y0 + 10);
         }
-        if (c->c) texDraw(c->c, x, baselineY - 9);              // верхний предел
-        if (c->b) texDraw(c->b, x, baselineY + 9);              // нижний предел
-        if (c->a) texDraw(c->a, x + max(bw, max(loW, hiW)) + 3, baselineY);
-        x += w + 3;
-        break;
       }
-      case TexNode::LIMIT: {
-        int16_t name = c->len * 6;
-        int16_t loW = texTextW(c->b);
-        int16_t w = max(name, loW);
-        texPrint(c->text, c->len, x, baselineY);
-        if (c->b) texDraw(c->b, x + (w - loW) / 2, baselineY + 8);   // предел снизу
-        if (c->c) texDraw(c->c, x + w + 2, baselineY - 4);           // сверху
-        if (c->a) texDraw(c->a, x + w + 4, baselineY);               // тело справа
-        x += w + 4;
-        break;
-      }
-      case TexNode::ACCENT: {
-        int16_t w = texTextW(c->a);
-        texDraw(c->a, x, baselineY);
-        const char* t = c->text; uint8_t l = c->len;
-        if (l >= 3 && (!strncmp(t, "vec", 3) || !strncmp(t, "acute", l))) {
-          texPix(x + w - 2, baselineY - 8, 1);
-          texPix(x + w - 1, baselineY - 9, 1);
-        } else if (l >= 3 && !strncmp(t, "hat", 3)) {
-          texPix(x + w / 2, baselineY - 10, 1);
-          texPix(x + w / 2 - 1, baselineY - 9, 1);
-          texPix(x + w / 2 + 1, baselineY - 9, 1);
-        } else if (l >= 5 && !strncmp(t, "tilde", 5)) {
-          texPix(x + w / 2 - 2, baselineY - 8, 1);
-          texPix(x + w / 2 - 1, baselineY - 9, 1);
-          texPix(x + w / 2, baselineY - 8, 1);
-          texPix(x + w / 2 + 1, baselineY - 9, 1);
-        } else if (l >= 3 && !strncmp(t, "dot", 3)) {
-          texPix(x + w / 2, baselineY - 9, 1);
-          if (l >= 4 && !strncmp(t, "ddot", 4)) texPix(x + w / 2 + 3, baselineY - 9, 1);
-        } else {                                     // bar / overline / overrightarrow...
-          texHLine(x, x + w - 1, baselineY - 8);
-          if (l >= 14) {                             // overrightarrow: наконечник стрелки
-            texPix(x + w, baselineY - 8, 1);
-            texPix(x + w - 1, baselineY - 9, 1);
-            texPix(x + w - 1, baselineY - 7, 1);
+      opnd = false;
+      break;
+    }
+
+    case T_ACCENT: {
+      uint8_t k = c->len;
+      TexBox B = texLay(c->a, x, base, lvl, draw);
+      int16_t xe = x + (B.w > 1 ? B.w - 2 : 0), cx = (x + xe) / 2;
+      if (k == 9) {                                   // underline
+        if (draw) texHLine(x, xe, base + B.dn + 2);
+        r.up = B.up; r.dn = B.dn + 2;
+      } else {
+        int16_t y = base - B.up - 2;
+        if (draw) {
+          switch (k) {
+            case 0: texHLine(x, xe, y); texPix(xe - 1, y - 1); texPix(xe - 1, y + 1); break;
+            case 1: texPix(cx, y - 1); texPix(cx - 1, y); texPix(cx + 1, y); break;
+            case 2: texHLine(x, xe, y); break;
+            case 3: texPix(cx, y); break;
+            case 4: texPix(cx - 1, y); texPix(cx + 1, y); break;
+            case 5: texPix(cx - 2, y); texPix(cx - 1, y - 1); texPix(cx, y - 1); texPix(cx + 1, y); break;
+            case 6: texPix(cx + 1, y - 1); texPix(cx, y); break;
+            case 7: texPix(cx - 1, y - 1); texPix(cx, y); break;
+            case 8: texPix(cx - 1, y - 1); texPix(cx, y); texPix(cx + 1, y - 1); break;
           }
         }
-        x += w + 2;
-        break;
+        r.up = B.up + 3; r.dn = B.dn;
       }
-      case TexNode::UNDER: {
-        int16_t w = texTextW(c->a);
-        texDraw(c->a, x, baselineY);
-        if (c->b) {                                  // подпись СНИЗУ (underbrace)
-          int16_t uy = baselineY + 3;
-          for (int16_t i = 0; i < w; i += 2) {       // огибающая
-            int16_t dy = (i < 3 || i > w - 4) ? 1 : 0;
-            texPix(x + i, uy + dy, 1);
-          }
-          texPix(x + w / 2, uy + 2, 1);
-          int16_t uw = texTextW(c->b);
-          texDraw(c->b, x + (w - uw) / 2, baselineY + 10);
-        } else if (c->c) {                           // метка СВЕРХУ (stackrel)
-          int16_t uw = texTextW(c->c);
-          texDraw(c->c, x + (w - uw) / 2, baselineY - 8);
-        }
-        x += w + 2;
-        break;
+      r.w = B.w;
+      opnd = true;
+      break;
+    }
+
+    case T_BRACE: {                                   // underbrace / overbrace
+      TexBox B = texLay(c->a, x, base, lvl, draw);
+      int16_t xe = x + (B.w > 1 ? B.w - 2 : 0), cx = (x + xe) / 2;
+      if (c->flags & F_OVER) {
+        int16_t y = base - B.up - 2;
+        if (draw) { texHLine(x, xe, y); texPix(x, y + 1); texPix(xe, y + 1); texPix(cx, y - 1); }
+        r.up = B.up + 3; r.dn = B.dn;
+      } else {
+        int16_t y = base + B.dn + 2;
+        if (draw) { texHLine(x, xe, y); texPix(x, y - 1); texPix(xe, y - 1); texPix(cx, y + 1); }
+        r.up = B.up; r.dn = B.dn + 3;
       }
+      r.w = B.w;
+      opnd = true;
+      break;
     }
   }
-  return x - startX;
+  return r;
 }
 
 // ---------------- загрузка: одна формула = одна страница ----------------
-static void texLoadPages(File file) {
+// В texLines кладётся ТОЛЬКО формула страницы target; остальные только считаются.
+static void texLoadPages(File file, int8_t target) {
   file.seek(0);
   texNameCount = 0;
+  texLineCount = 0;
   memset(texNames, 0, sizeof(texNames));
+  memset(texLines, 0, sizeof(texLines));
 
-  String formula;                 // текущая формула (склеенные строки)
-  String pendingName;             // название текущей формулы
+  String formula, pendingName;
   bool haveFormula = false;
 
   auto flush = [&](const String& name) {
-    if (formula.length() == 0) return;
-    if (texNameCount >= 24) return;               // защита от переполнения
-    texLineCount = 0;
-    memset(texLines, 0, sizeof(texLines));
-    uint8_t li = 0, ci = 0;
-    for (uint16_t i = 0; i < formula.length(); i++) {
-      char ch = formula[i];
-      if (ch == '\n') { li++; ci = 0; if (li >= TEX_MAX_LINES) li = TEX_MAX_LINES - 1; continue; }
-      if (ci < TEX_LINE_LEN - 1) texLines[li][ci++] = ch;
+    if (formula.length() == 0) { haveFormula = false; return; }
+    if (texNameCount < TEX_MAX_PAGES) {
+      if (texNameCount == (uint8_t)target) {
+        uint8_t li = 0, ci = 0;
+        for (uint16_t i = 0; i < formula.length(); i++) {
+          char ch = formula[i];
+          if (ch == '\n') { if (li + 1 >= TEX_MAX_LINES) break; li++; ci = 0; continue; }
+          if (ci < TEX_LINE_LEN - 1) texLines[li][ci++] = ch;
+        }
+        texLineCount = li + 1;
+      }
+      uint8_t nl = min<uint16_t>(name.length(), TEX_NAME_LEN);
+      memcpy(texNames[texNameCount], name.c_str(), nl);
+      texNames[texNameCount][nl] = 0;
+      texNameCount++;
     }
-    texLines[li][ci] = 0;
-    texLineCount = li + 1;
-    uint8_t nl = min<uint16_t>(name.length(), TEX_NAME_LEN);
-    memcpy(texNames[texNameCount], name.c_str(), nl);
-    texNames[texNameCount][nl] = 0;
-    texNameCount++;
     formula = "";
     haveFormula = false;
   };
 
   String line;
-  while (file.available()) {
-    int c = file.read();
-    if (c == '\n' || c == '\r') {
-      if (c == '\r' && file.peek() == '\n') file.read();
-      line.trim();
-      if (line.startsWith("##")) {                 // ## Название - новая страница
-        flush(pendingName);
-        pendingName = line.substring(2);
-        pendingName.trim();
-      } else if (line.startsWith("%") || line.startsWith("//")) {
-        // комментарий - игнор
-      } else if (line.startsWith("\\title")) {     // \title{Название} - новая страница
-        flush(pendingName);
-        pendingName = "";
-        int a = line.indexOf('{'), b = line.lastIndexOf('}');
-        if (a >= 0 && b > a) pendingName = line.substring(a + 1, b);
-        pendingName.trim();
-      } else if (line.length()) {
+  auto processLine = [&]() {
+    line.trim();
+    if (line.startsWith("##")) {
+      flush(pendingName);
+      pendingName = line.substring(2);
+      pendingName.trim();
+    } else if (line.startsWith("%") || line.startsWith("//")) {
+      // комментарий
+    } else if (line.startsWith("\\title")) {
+      flush(pendingName);
+      pendingName = "";
+      int a = line.indexOf('{'), b = line.lastIndexOf('}');
+      if (a >= 0 && b > a) pendingName = line.substring(a + 1, b);
+      pendingName.trim();
+    } else if (line.length()) {
+      if (line.startsWith("\\begin") || line.startsWith("\\end")) {   // строка-обёртка - пропускаем
+        int b = line.indexOf('}');
+        String rest = (b >= 0) ? line.substring(b + 1) : String("");
+        rest.trim();
+        line = rest;
+      }
+      if (line == "$$" || line == "\\[" || line == "\\]") line = "";
+      if (line.length()) {
         if (pendingName.length() == 0 && !haveFormula) {
-          int sep = line.indexOf(": ");            // "Название: формула"
+          int sep = line.indexOf(": ");                // "Название: формула"
           if (sep > 0 && sep <= TEX_NAME_LEN) {
             pendingName = line.substring(0, sep);
             line = line.substring(sep + 2);
@@ -728,81 +659,104 @@ static void texLoadPages(File file) {
         formula += line;
         haveFormula = true;
       }
-      line = "";
+    }
+    line = "";
+  };
+
+  while (file.available()) {
+    int c = file.read();
+    if (c == '\n' || c == '\r') {
+      if (c == '\r' && file.peek() == '\n') file.read();
+      processLine();
       yield();
-    } else {
-      if (line.length() < TEX_LINE_LEN * TEX_MAX_LINES) line += (char)c;
+    } else if (line.length() < TEX_LINE_LEN * TEX_MAX_LINES) {
+      line += (char)c;
     }
   }
-  line.trim();
-  if (line.length() && !line.startsWith("%") && !line.startsWith("//")) {
-    if (haveFormula) formula += "\n";
-    formula += line;
-    haveFormula = true;
-  }
+  processLine();
   flush(pendingName);
 }
 
-static uint8_t texTotalPages() {
-  return max<uint8_t>(texNameCount, 1);
-}
+static uint8_t texTotalPages() { return max<uint8_t>(texNameCount, 1); }
 
 static void texRenderPage(File file) {
-  // ВАЖНО: setup() включает oled.autoPrintln(true), из-за чего любая печать
-  // короче ширины экрана переводит курсор на новую строку и screen.dirty()
-  // каждый такой вызов выводит ОДНУ строку. Пока идем построчно - это выглядит
-  // как "все формулы = последняя". Отключаем автоперенос на время рендера.
+  // автоперенос в GyverOLED на время рендера выключаем (см. setup())
   oled.autoPrintln(false);
 
-  file.seek(0);
-  texLoadPages(file);
+  texLoadPages(file, texPage);
+  uint8_t total = texTotalPages();
+  if (texPage >= total) { texPage = total - 1; texLoadPages(file, texPage); }
 
-  uint8_t totalPages = texTotalPages();
-  if (texPage >= totalPages) texPage = totalPages - 1;
-
-  // Рисуем прямо во внутренний буфер GyverOLED: clear() обнуляет весь экран,
-  // дальше все texPix()/oled.dot() пишут в него, в конце один update().
-  // (Раньше использовался отдельный texBuf с ПОСТРОЧНЫМ порядком байт, тогда
-  //  как у GyverOLED_fix буфер СТОЛБЦОВЫЙ — картинка превращалась в кракозябру.)
   oled.clear();
 
-  // название формулы - сверху по центру (если задано)
+  // название сверху по центру
+  int16_t topY = 0;
   const char* name = texNames[texPage];
-  int16_t topY = 8;
-  if (name && *name) {
-    int16_t nw = strlen(name) * 6;
-    int16_t nx = (128 - nw) / 2;
-    if (nx < 0) nx = 0;
-    texPrint(name, strlen(name), nx, topY);
-    texHLine(nx, nx + nw - 1, topY + 2);
-    topY += 6;
+  if (*name) {
+    uint8_t nl = strlen(name);
+    int16_t nw = nl * 6 - 1;
+    int16_t nx = max<int16_t>(0, (128 - nw) / 2);
+    for (uint8_t i = 0; i < nl; i++) texChar5(name[i], nx + i * 6, 0);
+    texHLine(nx, nx + nw - 1, 9);
+    topY = 12;
   }
+  int16_t avail = 64 - topY;
 
-  // сама формула: блоки строк разделены переводом строки
-  uint8_t rows = texLineCount;
-  int16_t blockH = rows * 18;
-  int16_t avail = 60 - topY;
-  int16_t y0 = topY + max<int16_t>((avail - blockH) / 2 + 12, 12);
-
-  for (uint8_t i = 0; i < rows; i++) {
+  // разбор всех строк страницы (пул общий на страницу)
+  texResetPool();
+  TexNode* trees[TEX_MAX_LINES];
+  uint8_t rows = 0;
+  for (uint8_t i = 0; i < texLineCount; i++) {
+    if (!texLines[i][0]) continue;
     const char* src = texLines[i];
-    if (!*src) continue;
-    texResetPool();                     // чистый пул под каждую строку формулы
-    TexNode* tree = texParseSeq(src, '\0');
-    int16_t w = texTextW(tree);
-    int16_t x = (128 - w) / 2;
-    if (x < 0) x = 0;                         // широкие формумы печатаем с левого края
-    texDraw(tree, x, y0 + i * 18);
+    trees[rows++] = texParseSeq(src, '\0');
   }
 
-  // нижний статус: номер страницы
-  char status[16];
-  snprintf(status, sizeof(status), "%d/%d", texPage + 1, totalPages);
-  texPrint(status, strlen(status), 128 - strlen(status) * 6 - 1, 62);
+  if (texOom || rows == 0) {
+    const char* msg = texOom ? "FORMULA TOO LONG" : "(EMPTY)";
+    uint8_t ml = strlen(msg);
+    for (uint8_t i = 0; i < ml; i++) texChar5(msg[i], (128 - ml * 6) / 2 + i * 6, 30);
+    oled.update();
+    oled.autoPrintln(true);
+    return;
+  }
 
-  oled.update();                              // выводим весь кадр за одну транзакцию
+  // выбор размера: строка шире экрана или страница не влезает -> мелкий шрифт
+  TexBox bx[TEX_MAX_LINES];
+  uint8_t lv[TEX_MAX_LINES];
+  auto measure = [&](bool compact) -> int16_t {
+    int16_t tot = 0;
+    for (uint8_t r = 0; r < rows; r++) {
+      lv[r] = compact ? 1 : 0;
+      bx[r] = texLay(trees[r], 0, 0, lv[r], false);
+      if (!compact && bx[r].w > 128) { lv[r] = 1; bx[r] = texLay(trees[r], 0, 0, 1, false); }
+      tot += bx[r].up + bx[r].dn + 1;
+    }
+    return tot;
+  };
+  int16_t sumH = measure(false);
+  if (sumH + (rows - 1) * 2 > avail) sumH = measure(true);
 
-  oled.autoPrintln(true);                     // читалка печатает построчно (см. setup())
+  int16_t free_ = avail - sumH;
+  int16_t gap = 0, y = topY;
+  if (free_ > 0) {
+    gap = (rows > 1) ? min<int16_t>(6, free_ / (rows + 1)) : 0;
+    y = topY + (free_ - gap * (rows - 1)) / 2;
+  }
+  for (uint8_t r = 0; r < rows; r++) {
+    int16_t x = max<int16_t>(0, (128 - bx[r].w) / 2);
+    texLay(trees[r], x, y + bx[r].up, lv[r], true);
+    y += bx[r].up + bx[r].dn + 1 + gap;
+  }
+
+  // номер страницы мелким шрифтом в правом нижнем углу
+  char st[12];
+  snprintf(st, sizeof(st), "%d/%d", texPage + 1, total);
+  int16_t sw = strlen(st) * 4;
+  for (uint8_t i = 0; st[i]; i++) texChar3(st[i], 128 - sw + i * 4, 59);
+
+  oled.update();
+  oled.autoPrintln(true);
 }
 
 void enterToReadTexFile(void) {
@@ -816,11 +770,8 @@ void enterToReadTexFile(void) {
   }
 
   texPage = 0;
-  uint8_t pages = 0;
-  { // посчитать страницы (формул)
-    texLoadPages(file);
-    pages = texTotalPages();
-  }
+  texLoadPages(file, 0);                  // только посчитать страницы
+  uint8_t pages = texTotalPages();
   texRenderPage(file);
 
   while (1) {
