@@ -78,6 +78,15 @@ static int16_t texTextW(TexNode* n);
 static int16_t texDraw(TexNode* n, int16_t x, int16_t baselineY);
 static void texLoadPages(File file);
 static void texRenderPage(File file);
+
+// сбрасывает кольцевой пул нод перед парсингом каждой страницы/формулы.
+// Без этого при повторных вызовах texParseSeq() новые формулы начинали
+// использовать "хвост" старого пула: указатели next/b/c оставались от
+// предыдущих деревьев и на экране появлялась каша/последняя формула.
+static void texResetPool() {
+  extern uint8_t texPoolUsed;   // определяется рядом с пулом
+  texPoolUsed = 0;
+}
 // ------------------------------------------------------------
 
 static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
@@ -87,13 +96,14 @@ static char texNames[24][TEX_NAME_LEN + 1];   // названия формул (
 static uint8_t texNameCount = 0;
 
 // ------------------ разбор дерева формул ------------------
+uint8_t texPoolUsed = 0;            // счётчик занятых нод (сбрасывается на страницу)
+
 static TexNode* texAlloc() {
   static TexNode pool[220];
-  static uint8_t used = 0;
-  if (used >= 220) used = 0;                // кольцевой пул (перерисовка страницы)
-  TexNode* n = &pool[used++];
+  if (texPoolUsed >= 220) texPoolUsed = 0;   // защита: очень длинная формула
+  TexNode* n = &pool[texPoolUsed++];
   n->type = TexNode::TEXT; n->text = nullptr; n->len = 0;
-  n->a = n->b = n->c = n->next = nullptr;
+  n->a = n->b = n->c = n->next = nullptr;    // ОБЯЗАТЕЛЬНО обнуляем: нода переиспользуется
   return n;
 }
 
@@ -423,15 +433,15 @@ static TexNode* texParseGroup(const char*& p) {
   return nullptr;
 }
 
-// ---------------- растризация в буфер 128x64 ----------------
-static uint8_t texBuf[128 * 64 / 8];
-static int16_t texMinY, texMaxY;
-
+// ---------------- растризация ----------------
+// ПИКСЕЛЬНЫЙ ПОРЯДОК БУФЕРА GyverOLED_fix (столбцовый!):
+//   индекс = (y >> 3) + x * 8, бит = y & 7.
+// Раньше здесь использовался построчный порядок (y*16 + x/8) — из-за этого
+// картинка выводилась "кракозяброй". Теперь рисуем прямо во внутренний
+// буфер библиотеки через oled.dot() (он сам считает правильные индексы).
 static void texPix(int16_t x, int16_t y, bool on) {
   if (x < 0 || x > 127 || y < 0 || y > 63) return;
-  if (on) texBuf[y * 16 + (x >> 3)] |= (0x80 >> (x & 7));
-  if (y < texMinY) texMinY = y;
-  if (y > texMaxY) texMaxY = y;
+  oled.dot(x, y, on ? 1 : 0);
 }
 
 static void texHLine(int16_t x0, int16_t x1, int16_t y) { for (int16_t x = x0; x <= x1; x++) texPix(x, y, 1); }
@@ -750,8 +760,11 @@ static void texRenderPage(File file) {
   uint8_t totalPages = texTotalPages();
   if (texPage >= totalPages) texPage = totalPages - 1;
 
-  memset(texBuf, 0, sizeof(texBuf));
-  texMinY = 63; texMaxY = 0;
+  // Рисуем прямо во внутренний буфер GyverOLED: clear() обнуляет весь экран,
+  // дальше все texPix()/oled.dot() пишут в него, в конце один update().
+  // (Раньше использовался отдельный texBuf с ПОСТРОЧНЫМ порядком байт, тогда
+  //  как у GyverOLED_fix буфер СТОЛБЦОВЫЙ — картинка превращалась в кракозябру.)
+  oled.clear();
 
   // название формулы - сверху по центру (если задано)
   const char* name = texNames[texPage];
@@ -774,6 +787,7 @@ static void texRenderPage(File file) {
   for (uint8_t i = 0; i < rows; i++) {
     const char* src = texLines[i];
     if (!*src) continue;
+    texResetPool();                     // чистый пул под каждую строку формулы
     TexNode* tree = texParseSeq(src, '\0');
     int16_t w = texTextW(tree);
     int16_t x = (128 - w) / 2;
@@ -786,12 +800,7 @@ static void texRenderPage(File file) {
   snprintf(status, sizeof(status), "%d/%d", texPage + 1, totalPages);
   texPrint(status, strlen(status), 128 - strlen(status) * 6 - 1, 62);
 
-  // вывод буфера на OLED: заполняем весь экран за один update()
-  oled.clear();
-  for (int16_t y = 0; y < 64; y++)
-    for (int16_t x = 0; x < 128; x++)
-      if (texBuf[y * 16 + (x >> 3)] & (0x80 >> (x & 7))) oled.dot(x, y, 1);
-  oled.update();
+  oled.update();                              // выводим весь кадр за одну транзакцию
 
   oled.autoPrintln(true);                     // читалка печатает построчно (см. setup())
 }
