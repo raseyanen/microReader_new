@@ -152,6 +152,7 @@ void fileReadError(void);
 void enterToServiceMode(void);                                           // servmode.ino
 void enterToWifiMenu(void);                                              // wifi.ino / portal.ino
 void enterToGameMode(void);                                              // gamemode.ino
+void enterToDeepSleep(void);                                             // gamemode.ino (deep sleep)
 /* =================================================== */
 
 void setup() {
