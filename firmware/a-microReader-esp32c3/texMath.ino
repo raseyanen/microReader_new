@@ -27,6 +27,7 @@
 #define TEX_MAX_LINES 5      // максимум строк в одной формуле
 #define TEX_LINE_LEN 128     // максимум символов в строке
 #define TEX_NAME_LEN 20      // максимум символов в названии
+#define TEX_NAME_BYTES (TEX_NAME_LEN * 2 + 1) // в UTF-8 буква = до 2 байт
 #define TEX_MAX_PAGES 40     // максимум формул (страниц) в файле
 #define TEX_POOL 320         // максимум нод дерева на страницу
 #include "texFont.h"
@@ -62,7 +63,7 @@ static void texRenderPage(File file);
 static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
 static uint8_t texLineCount = 0;
 static int8_t texPage = 0;
-static char texNames[TEX_MAX_PAGES][TEX_NAME_LEN + 1];
+static char texNames[TEX_MAX_PAGES][TEX_NAME_BYTES];
 static uint8_t texNameCount = 0;
 
 // ------------------ пул нод ------------------
@@ -334,6 +335,33 @@ static void texChar3(char ch, int16_t x, int16_t y) {
   for (uint8_t r = 0; r < 5; r++)
     for (uint8_t c = 0; c < 3; c++)
       if ((g >> (14 - 3 * r - c)) & 1) texPix(x + c, y + r);
+}
+
+// UTF-8 (2 байта) -> код символа; всё нераспознанное -> '?'
+static uint16_t texU8Next(const char*& s) {
+  uint8_t b = (uint8_t)*s++;
+  if (b < 0x80) return b;
+  if (b >= 0xC0 && b < 0xE0 && (((uint8_t)*s) & 0xC0) == 0x80) {
+    uint16_t cp = ((b & 0x1F) << 6) | (((uint8_t)*s) & 0x3F);
+    s++;
+    return cp;
+  }
+  while ((((uint8_t)*s) & 0xC0) == 0x80) s++;       // пропустить хвост чужой последовательности
+  return '?';
+}
+static uint8_t texU8Len(const char* s) { uint8_t n = 0; while (*s) { texU8Next(s); n++; } return n; }
+
+// рисует один символ названия 5x7 (y - верхняя строка)
+static void texDrawCp(uint16_t cp, int16_t x, int16_t y) {
+  if (cp < 127) { texChar5((char)cp, x, y); return; }
+  for (auto& l : texCyrLook) if (l.cp == cp) { texChar5(l.ch, x, y); return; }
+  for (auto& g : texCyr) {
+    if (g.cp == cp) {
+      for (uint8_t i = 0; i < 40; i++) if (g.px[i] == '#') texPix(x + i % 5, y + i / 5);
+      return;
+    }
+  }
+  texChar5('?', x, y);
 }
 
 // ------------------ раскладка и рисование ------------------
@@ -615,9 +643,17 @@ static void texLoadPages(File file, int8_t target) {
         }
         texLineCount = li + 1;
       }
-      uint8_t nl = min<uint16_t>(name.length(), TEX_NAME_LEN);
-      memcpy(texNames[texNameCount], name.c_str(), nl);
-      texNames[texNameCount][nl] = 0;
+            // обрезаем по БУКВАМ, не разрывая двухбайтовый символ
+      const char* nm = name.c_str();
+      uint8_t total = name.length(), nb = 0, chars = 0;
+      while (nb < total && chars < TEX_NAME_LEN) {
+        uint8_t b = (uint8_t)nm[nb];
+        uint8_t len = (b >= 0xF0) ? 4 : (b >= 0xE0) ? 3 : (b >= 0xC0) ? 2 : 1;
+        if (nb + len > total) break;
+        nb += len; chars++;
+      }
+      memcpy(texNames[texNameCount], nm, nb);
+      texNames[texNameCount][nb] = 0;
       texNameCount++;
     }
     formula = "";
@@ -650,7 +686,7 @@ static void texLoadPages(File file, int8_t target) {
       if (line.length()) {
         if (pendingName.length() == 0 && !haveFormula) {
           int sep = line.indexOf(": ");                // "Название: формула"
-          if (sep > 0 && sep <= TEX_NAME_LEN) {
+          if (sep > 0 && sep <= TEX_NAME_LEN * 2) {
             pendingName = line.substring(0, sep);
             line = line.substring(sep + 2);
           }
@@ -693,10 +729,11 @@ static void texRenderPage(File file) {
   int16_t topY = 0;
   const char* name = texNames[texPage];
   if (*name) {
-    uint8_t nl = strlen(name);
+    uint8_t nl = texU8Len(name);
     int16_t nw = nl * 6 - 1;
     int16_t nx = max<int16_t>(0, (128 - nw) / 2);
-    for (uint8_t i = 0; i < nl; i++) texChar5(name[i], nx + i * 6, 0);
+    const char* sp = name;
+    for (uint8_t i = 0; *sp; i++) texDrawCp(texU8Next(sp), nx + i * 6, 0);
     texHLine(nx, nx + nw - 1, 9);
     topY = 12;
   }
