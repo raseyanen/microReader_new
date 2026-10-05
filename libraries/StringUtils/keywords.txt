@@ -43,9 +43,12 @@ list	KEYWORD2
 unicode	KEYWORD2
 url	KEYWORD2
 
+#text
 pgm	KEYWORD2
 terminated	KEYWORD2
 lengthUnicode	KEYWORD2
+unicodeToPos	KEYWORD2
+posToUnicode	KEYWORD2
 length	KEYWORD2
 calcLen	KEYWORD2
 readLen	KEYWORD2
@@ -56,16 +59,22 @@ printTo	KEYWORD2
 compare	KEYWORD2
 compareN	KEYWORD2
 substring	KEYWORD2
+substringUnicode	KEYWORD2
 startsWith	KEYWORD2
 endsWith	KEYWORD2
 indexOf	KEYWORD2
+indexOfUnicode	KEYWORD2
 lastIndexOf	KEYWORD2
+lastIndexOfUnicode	KEYWORD2
 find	KEYWORD2
 charAt	KEYWORD2
 addString	KEYWORD2
+decodeUrl	KEYWORD2
+decodeUnicode	KEYWORD2
 toString	KEYWORD2
 toStr	KEYWORD2
 toBool	KEYWORD2
+toInt	KEYWORD2
 toInt16	KEYWORD2
 toInt32	KEYWORD2
 toInt32HEX	KEYWORD2
@@ -77,6 +86,7 @@ count	KEYWORD2
 split	KEYWORD2
 getSub	KEYWORD2
 trim	KEYWORD2
+c_str	KEYWORD2
 
 encodedLen	KEYWORD2
 decodedLen	KEYWORD2
@@ -100,7 +110,7 @@ getLog10	KEYWORD2
 
 length	KEYWORD2
 indexOf	KEYWORD2
-includes	KEYWORD2
+has	KEYWORD2
 get	KEYWORD2
 setDiv	KEYWORD2
 parseTo	KEYWORD2
@@ -124,6 +134,9 @@ hash32_P	KEYWORD2
 SH	KEYWORD2
 SL	KEYWORD2
 SH32	KEYWORD2
+_SH	KEYWORD2
+_SH32	KEYWORD2
+_SL	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
@@ -135,3 +148,7 @@ SU_ANYVALUE_BUF_LEN	LITERAL1
 constChar	LITERAL1
 pgmChar	LITERAL1
 value	LITERAL1
+
+_h	LITERAL1
+_h32	LITERAL1
+_len	LITERAL1

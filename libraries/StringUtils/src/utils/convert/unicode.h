@@ -6,14 +6,19 @@
 namespace su {
 namespace unicode {
 
-// декодировать строку с unicode символами. зарезервировать строку на длину len. Иначе - по длине строки
-String decode(const char* str, uint16_t len = 0);
+// декодировать строку с unicode символами саму в себя (не добавляет '\0' в конец)
+size_t decodeSelf(char* str);
+size_t decodeSelf(char* str, size_t len);
+
+// декодировать строку с unicode символами
+String decode(const char* str);
+String decode(const char* str, size_t len);
 
 // декодировать строку с unicode символами
 String decode(const String& str);
 
 // кодировать unicode символ по его коду. В массиве должно быть 5 ячеек
-void encode(char* str, uint32_t c);
+uint8_t encode(char* str, uint32_t c, bool terminate = true);
 
 // кодировать unicode символ по его коду
 String encode(uint32_t code);

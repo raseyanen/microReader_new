@@ -8,7 +8,7 @@ void setup() {
     Serial.println();
 
     // ================ DOUBLE PARSER ================
-    su::Text t("123;456\nabc;def;ghk\n333;444");
+    Text t("123;456\nabc;def;ghk\n333;444");
 
     for (su::TextParser row(t, '\n'); row.parse();) {
         Serial.print("row #");
@@ -22,15 +22,15 @@ void setup() {
 
     // ================ SINGLE PARSER ================
 
-    su::Text txtC(";123;;456;");
-    su::Text txtT("::123::::456::");
+    Text txtC(";123;;456;");
+    Text txtT("::123::::456::");
 
     // ================ TEXTLIST ================
     // char
     {
         Serial.print("TextList: ");
         su::TextList list(txtC, ';');
-        for (int i = 0; i < list.length(); i++) {
+        for (uint16_t i = 0; i < list.length(); i++) {
             Serial.print(list[i]);
             Serial.print(',');
         }
@@ -41,7 +41,7 @@ void setup() {
     {
         Serial.print("TextList: ");
         su::TextList list(txtT, "::");
-        for (int i = 0; i < list.length(); i++) {
+        for (uint16_t i = 0; i < list.length(); i++) {
             Serial.print(list[i]);
             Serial.print(',');
         }
@@ -81,7 +81,7 @@ void setup() {
 
         // parse to text
         {
-            su::Text arr[5];
+            Text arr[5];
             int am = txtC.split(arr, 5, ';');
             Serial.println(am);
             Serial.print("text: ");
@@ -131,7 +131,7 @@ void setup() {
 
         // parse to text
         {
-            su::Text arr[5];
+            Text arr[5];
             int am = txtT.split(arr, 5, "::");
             Serial.println(am);
             Serial.print("text: ");

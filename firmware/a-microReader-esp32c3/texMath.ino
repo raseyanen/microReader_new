@@ -34,7 +34,7 @@
 
 // ------------------ типы (ДО автопрототипов Arduino IDE) ------------------
 enum : uint8_t { T_TEXT, T_SYM, T_SPACE, T_GROUP, T_FRAC, T_SQRT, T_BIGOP, T_ACCENT, T_BRACE };
-enum : uint8_t { F_LIMITS = 1, F_BINOM = 2, F_PAD = 4, F_FUNC = 8, F_OVER = 16 };
+enum : uint8_t { F_LIMITS = 1, F_BINOM = 2, F_PAD = 4, F_FUNC = 8, F_OVER = 16, F_REL=32 };
 
 struct TexNode {
   uint8_t type, flags, len;      // len: длина текста / вид акцента или оператора / ширина пробела
@@ -57,8 +57,11 @@ static TexBox texLay(TexNode* n, int16_t x, int16_t base, uint8_t lvl, bool draw
 static TexBox texAtom(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd);
 static TexBox texCore(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool draw, bool& opnd);
 static void texLoadPages(File file, int8_t target);
-static void texRenderPage(File file);
-
+static void texParseAll();
+static int16_t texBuildLayout(uint8_t lvl);
+static uint8_t texWrap(TexNode* head, int16_t maxW, uint8_t lvl, TexNode** out, uint8_t maxOut);
+static void texPrepare(File file);
+static void texDrawPage();
 // ------------------ данные страницы ------------------
 static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
 static uint8_t texLineCount = 0;
@@ -173,6 +176,14 @@ static TexNode* texParseGroup(const char*& p) {
   return nullptr;
 }
 
+static bool texIsRelSym(const char* cmd) {
+  static const char* const rel[] = {"leq","geq","neq","approx","equiv","sim","to","leftarrow","leftrightarrow",
+    "Rightarrow","Leftarrow","Leftrightarrow","mapsto","in","notin","ni","subset","subseteq","supset","supseteq",
+    "perp","parallel","propto","ll","gg"};
+  for (auto r : rel) if (!strcmp(cmd, r)) return true;
+  return false;
+}
+
 // p указывает на символ после '\'. Возвращает ноду или nullptr (команда пропущена)
 static TexNode* texParseCmd(const char*& p) {
   if (!*p) return nullptr;
@@ -258,7 +269,8 @@ static TexNode* texParseCmd(const char*& p) {
   for (auto& al : texAliases) if (texIs(s, l, al.from)) { s = al.to; l = strlen(al.to); break; }
   for (auto& g : texGlyphs) {
     if (texIs(s, l, g.cmd)) {
-      n = texAlloc(); n->type = T_SYM; n->text = g.px; n->flags = g.pad ? F_PAD : 0; return n;
+      n = texAlloc(); n->type = T_SYM; n->text = g.px;
+      n->flags = (g.pad ? F_PAD : 0) | (texIsRelSym(g.cmd) ? F_REL : 0); return n;
     }
   }
   for (auto& as : texAscii) if (texIs(s, l, as.cmd)) return texMakeText(as.txt, strlen(as.txt));
@@ -300,9 +312,11 @@ static TexNode* texParseSeq(const char*& p, char term) {
       p++; node = texMakeSpace(8);
     } else {
       const char* st = p;
-      while (*p && *p != term && !strchr("^_\\{}$%~& \t", *p) && (p - st) < 120) p++;
+      if (strchr("=<>+-", *p)) p++;                  // оператор - отдельная нода (точка переноса)
+      else while (*p && *p != term && !strchr("^_\\{}$%~& \t=<>+-", *p) && (p - st) < 120) p++;
       if (p == st) p++;                              // страховка от зацикливания
       node = texMakeText(st, p - st);
+      if (p - st == 1 && strchr("=<>", *st)) node->flags |= F_REL;
     }
     if (node) {
       if (tail) tail->next = node; else head = node;
@@ -313,10 +327,12 @@ static TexNode* texParseSeq(const char*& p, char term) {
 }
 
 // ------------------ рисование примитивов ------------------
+static int16_t texClipTop = 0;
 static void texPix(int16_t x, int16_t y) {
-  if (x < 0 || x > 127 || y < 0 || y > 63) return;
+  if (x < 0 || x > 127 || y < texClipTop || y > 63) return;
   oled.dot(x, y, 1);
 }
+
 static void texHLine(int16_t x0, int16_t x1, int16_t y) { for (int16_t x = x0; x <= x1; x++) texPix(x, y); }
 static void texVLine(int16_t x, int16_t y0, int16_t y1) { for (int16_t y = y0; y <= y1; y++) texPix(x, y); }
 
@@ -715,81 +731,187 @@ static void texLoadPages(File file, int8_t target) {
 
 static uint8_t texTotalPages() { return max<uint8_t>(texNameCount, 1); }
 
-static void texRenderPage(File file) {
-  // автоперенос в GyverOLED на время рендера выключаем (см. setup())
-  oled.autoPrintln(false);
+// ---------------- переносы, раскладка, прокрутка ----------------
+#define TEX_MAX_SEGS 16        // максимум строк на экране после переносов
+#define TEX_INDENT 8           // отступ строки-продолжения
+static TexNode* texTree[TEX_MAX_LINES];
+static uint8_t texRows = 0;
+static TexNode* texSeg[TEX_MAX_SEGS];
+static TexBox texSegBox[TEX_MAX_SEGS];
+static bool texSegCont[TEX_MAX_SEGS], texSegWrap[TEX_MAX_SEGS];
+static uint8_t texSegN = 0, texLvl = 0;
+static int16_t texContentW = 0, texContentH = 0, texTopY = 0;
+static int16_t texMaxX = 0, texMaxY = 0, texScrollX = 0, texScrollY = 0;
+enum : uint8_t { TM_PAGE, TM_VERT, TM_HORZ };
+static uint8_t texMode = TM_PAGE;
 
+static void texParseAll() {
+  texResetPool();
+  texRows = 0;
+  for (uint8_t i = 0; i < texLineCount; i++) {
+    if (!texLines[i][0]) continue;
+    const char* src = texLines[i];
+    texTree[texRows++] = texParseSeq(src, '\0');
+  }
+}
+
+// Режет верхний уровень списка на строки. Переносим ПОСЛЕ отношения, иначе ПОСЛЕ бинарного оператора,
+// только вне скобок. Возвращает число строк, out[] - их первые ноды (список физически обрезается).
+static uint8_t texWrap(TexNode* head, int16_t maxW, uint8_t lvl, TexNode** out, uint8_t maxOut) {
+  uint8_t n = 0;
+  TexNode* start = head;
+  TexNode *bestRel = nullptr, *bestBin = nullptr;
+  int16_t w = 0;
+  int8_t depth = 0;
+  bool opnd = false;
+  TexNode* c = head;
+  while (c) {
+    bool before = opnd;
+    TexBox b = texAtom(c, 0, 0, lvl, false, opnd);
+    int16_t room = maxW - (n ? TEX_INDENT : 0);
+    if (w > 0 && w + b.w > room && (bestRel || bestBin) && n + 1 < maxOut) {
+      TexNode* cut = bestRel ? bestRel : bestBin;
+      TexNode* nxt = cut->next;
+      cut->next = nullptr;
+      out[n++] = start;
+      start = c = nxt;                               // новая строка - заново меряем с узла после разреза
+      w = 0; depth = 0; opnd = false; bestRel = bestBin = nullptr;
+      continue;
+    }
+    w += b.w;
+    if (c->type == T_TEXT) {
+      for (uint8_t i = 0; i < c->len; i++) {
+        char ch = c->text[i];
+        if (ch == '(' || ch == '[') depth++;
+        else if ((ch == ')' || ch == ']') && depth > 0) depth--;
+      }
+    }
+    if (depth == 0) {
+      if (c->flags & F_REL) bestRel = c;
+      else if (before && c->type == T_TEXT && c->len == 1 && (c->text[0] == '+' || c->text[0] == '-')) bestBin = c;
+      else if (before && c->type == T_SYM && (c->flags & F_PAD)) bestBin = c;
+    }
+    c = c->next;
+  }
+  out[n++] = start;
+  return n;
+}
+
+// Парсинг + переносы + замеры при размере lvl. Возвращает суммарную высоту.
+static int16_t texBuildLayout(uint8_t lvl) {
+  texParseAll();
+  texSegN = 0; texLvl = lvl; texContentW = 0;
+  if (texOom) return 0;
+  int16_t tot = 0;
+  for (uint8_t r = 0; r < texRows; r++) {
+    TexNode* parts[TEX_MAX_SEGS];
+    uint8_t maxOut = TEX_MAX_SEGS - texSegN - (texRows - r - 1);
+    uint8_t cnt = texWrap(texTree[r], 126, lvl, parts, maxOut);
+    for (uint8_t k = 0; k < cnt; k++) {
+      TexBox b = texLay(parts[k], 0, 0, lvl, false);
+      texSeg[texSegN] = parts[k];
+      texSegBox[texSegN] = b;
+      texSegCont[texSegN] = (k > 0);
+      texSegWrap[texSegN] = (cnt > 1);
+      int16_t w = b.w + (k > 0 ? TEX_INDENT : 0);
+      if (w > texContentW) texContentW = w;
+      tot += b.up + b.dn + 1;
+      texSegN++;
+    }
+  }
+  if (texSegN > 1) tot += (texSegN - 1) * 2;
+  return tot;
+}
+
+// Загрузка страницы + выбор размера: обычный с переносами -> мелкий с переносами -> обычный со скроллом
+static void texPrepare(File file) {
   texLoadPages(file, texPage);
   uint8_t total = texTotalPages();
   if (texPage >= total) { texPage = total - 1; texLoadPages(file, texPage); }
+  texTopY = *texNames[texPage] ? 12 : 0;
+  int16_t availH = 64 - texTopY;
 
+  int16_t h = texBuildLayout(0);
+  if (!texOom && (h > availH || texContentW > 128)) {
+    int16_t h1 = texBuildLayout(1);
+    if (texOom || h1 > availH || texContentW > 128) h = texBuildLayout(0);   // и так не влезло - скролл
+    else h = h1;
+  }
+  texContentH = h;
+  texMaxX = (texContentW > 128) ? texContentW - 128 + 2 : 0;
+  texMaxY = (texContentH > availH) ? texContentH - availH : 0;
+  texScrollX = texScrollY = 0;
+  if ((texMode == TM_VERT && !texMaxY) || (texMode == TM_HORZ && !texMaxX)) texMode = TM_PAGE;
+}
+
+static void texClr(int16_t x, int16_t y) { if (x >= 0 && x <= 127 && y >= 0 && y <= 63) oled.dot(x, y, 0); }
+
+// стрелка-индикатор 3x5 в центре (x,y). dir: 0 вверх, 1 вниз, 2 влево, 3 вправо
+static void texArrow(uint8_t dir, int16_t x, int16_t y) {
+  for (int8_t i = -3; i <= 3; i++) for (int8_t j = -3; j <= 3; j++) texClr(x + i, y + j);
+  for (int8_t r = 0; r < 3; r++)
+    for (int8_t m = -r; m <= r; m++) {
+      switch (dir) {
+        case 0: texPix(x + m, y - 1 + r); break;
+        case 1: texPix(x + m, y + 1 - r); break;
+        case 2: texPix(x - 1 + r, y + m); break;
+        default: texPix(x + 1 - r, y + m); break;
+      }
+    }
+}
+
+static void texDrawPage() {
+  oled.autoPrintln(false);
   oled.clear();
-
-  // название сверху по центру
-  int16_t topY = 0;
+  texClipTop = 0;
+  uint8_t total = texTotalPages();
   const char* name = texNames[texPage];
-  if (*name) {
+  if (*name) {                                        // название сверху по центру
     uint8_t nl = texU8Len(name);
     int16_t nw = nl * 6 - 1;
     int16_t nx = max<int16_t>(0, (128 - nw) / 2);
     const char* sp = name;
     for (uint8_t i = 0; *sp; i++) texDrawCp(texU8Next(sp), nx + i * 6, 0);
     texHLine(nx, nx + nw - 1, 9);
-    topY = 12;
   }
-  int16_t avail = 64 - topY;
+  int16_t availH = 64 - texTopY;
+  texClipTop = texTopY;                               // содержимое не залезает на заголовок
 
-  // разбор всех строк страницы (пул общий на страницу)
-  texResetPool();
-  TexNode* trees[TEX_MAX_LINES];
-  uint8_t rows = 0;
-  for (uint8_t i = 0; i < texLineCount; i++) {
-    if (!texLines[i][0]) continue;
-    const char* src = texLines[i];
-    trees[rows++] = texParseSeq(src, '\0');
-  }
-
-  if (texOom || rows == 0) {
+  if (texOom || texSegN == 0) {
     const char* msg = texOom ? "FORMULA TOO LONG" : "(EMPTY)";
     uint8_t ml = strlen(msg);
     for (uint8_t i = 0; i < ml; i++) texChar5(msg[i], (128 - ml * 6) / 2 + i * 6, 30);
-    oled.update();
-    oled.autoPrintln(true);
-    return;
-  }
-
-  // выбор размера: строка шире экрана или страница не влезает -> мелкий шрифт
-  TexBox bx[TEX_MAX_LINES];
-  uint8_t lv[TEX_MAX_LINES];
-  auto measure = [&](bool compact) -> int16_t {
-    int16_t tot = 0;
-    for (uint8_t r = 0; r < rows; r++) {
-      lv[r] = compact ? 1 : 0;
-      bx[r] = texLay(trees[r], 0, 0, lv[r], false);
-      if (!compact && bx[r].w > 128) { lv[r] = 1; bx[r] = texLay(trees[r], 0, 0, 1, false); }
-      tot += bx[r].up + bx[r].dn + 1;
+  } else {
+    int16_t extra = 0, y0;
+    if (texMaxY == 0) {                               // влезает по высоте - центрируем
+      extra = (texSegN > 1) ? min<int16_t>(4, (availH - texContentH) / (texSegN + 1)) : 0;
+      y0 = texTopY + (availH - texContentH - extra * (texSegN - 1)) / 2;
+    } else y0 = texTopY - texScrollY;
+    int16_t y = y0;
+    for (uint8_t i = 0; i < texSegN; i++) {
+      TexBox& bx = texSegBox[i];
+      int16_t ind = texSegCont[i] ? TEX_INDENT : 0;
+      int16_t x;
+      if (texMaxX) x = 1 - texScrollX + ind;                    // шире экрана - слева + прокрутка
+      else if (texSegWrap[i]) x = 1 + ind;                      // перенесённые строки - по левому краю
+      else x = max<int16_t>(0, (128 - bx.w) / 2);               // остальные по центру
+      texLay(texSeg[i], x, y + bx.up, texLvl, true);
+      y += bx.up + bx.dn + 1 + 2 + extra;
     }
-    return tot;
-  };
-  int16_t sumH = measure(false);
-  if (sumH + (rows - 1) * 2 > avail) sumH = measure(true);
-
-  int16_t free_ = avail - sumH;
-  int16_t gap = 0, y = topY;
-  if (free_ > 0) {
-    gap = (rows > 1) ? min<int16_t>(6, free_ / (rows + 1)) : 0;
-    y = topY + (free_ - gap * (rows - 1)) / 2;
-  }
-  for (uint8_t r = 0; r < rows; r++) {
-    int16_t x = max<int16_t>(0, (128 - bx[r].w) / 2);
-    texLay(trees[r], x, y + bx[r].up, lv[r], true);
-    y += bx[r].up + bx[r].dn + 1 + gap;
   }
 
-  // номер страницы мелким шрифтом в правом нижнем углу
-  char st[12];
-  snprintf(st, sizeof(st), "%d/%d", texPage + 1, total);
+  texClipTop = 0;
+  // метки "есть скрытое содержимое"
+  if (texScrollX < texMaxX) texArrow(3, 126, texTopY + availH / 2);
+  if (texScrollX > 0)       texArrow(2, 1,   texTopY + availH / 2);
+  if (texScrollY < texMaxY) texArrow(1, 64,  62);
+  if (texScrollY > 0)       texArrow(0, 64,  texTopY + 2);
+
+  // номер страницы (и режим V/H) в правом нижнем углу
+  char st[16];
+  snprintf(st, sizeof(st), "%s%d/%d", texMode == TM_VERT ? "V " : (texMode == TM_HORZ ? "H " : ""), texPage + 1, total);
   int16_t sw = strlen(st) * 4;
+  for (int16_t x = 128 - sw - 1; x < 128; x++) for (int16_t yy = 58; yy < 64; yy++) texClr(x, yy);
   for (uint8_t i = 0; st[i]; i++) texChar3(st[i], 128 - sw + i * 4, 59);
 
   oled.update();
@@ -807,25 +929,46 @@ void enterToReadTexFile(void) {
   }
 
   texPage = 0;
+  texMode = TM_PAGE;
   texLoadPages(file, 0);                  // только посчитать страницы
   uint8_t pages = texTotalPages();
-  texRenderPage(file);
+  texPrepare(file);
+  texDrawPage();
 
   while (1) {
     up.tick(); ok.tick(); down.tick();
-    if (ok.click()) {
+    bool overflow = texMaxX || texMaxY;
+
+    // выход: удержание ОК, а если всё влезло - как раньше, по клику
+    if (ok.hold() || (ok.click() && !overflow)) {
       uiTimer = millis();
       drawMainMenu();
       file.close();
       return;
     }
-    if (down.click() || down.step()) {
+    if (ok.click()) {                     // переключение режима: страницы -> верт. -> гориз.
       uiTimer = millis();
-      if (texPage < pages - 1) { texPage++; texRenderPage(file); }
+      if (texMode == TM_PAGE) texMode = texMaxY ? TM_VERT : TM_HORZ;
+      else if (texMode == TM_VERT) texMode = texMaxX ? TM_HORZ : TM_PAGE;
+      else texMode = TM_PAGE;
+      texDrawPage();
     }
-    if (up.click() || up.step()) {
+
+    int8_t dir = 0;
+    if (down.click() || down.step()) dir = 1;
+    if (up.click() || up.step()) dir = -1;
+    if (dir) {
       uiTimer = millis();
-      if (texPage > 0) { texPage--; texRenderPage(file); }
+      if (texMode == TM_PAGE) {
+        int8_t np = texPage + dir;
+        if (np >= 0 && np < pages) { texPage = np; texPrepare(file); texDrawPage(); }
+      } else if (texMode == TM_VERT) {
+        texScrollY = constrain(texScrollY + dir * 8, 0, texMaxY);
+        texDrawPage();
+      } else {
+        texScrollX = constrain(texScrollX + dir * 8, 0, texMaxX);
+        texDrawPage();
+      }
     }
     yield();
   }

@@ -71,7 +71,7 @@
 // GyverLibs — отсюда ошибка 'su' has not been declared.
 // Лечится относительным include'ом header'а самой библиотеки:
 #include "../../libraries/StringUtils/src/StringUtils.h"  // GyverLibs StringUtils (su::Text / su::TextParser)
-#include <GyverOLED_fix.h>  // Либа олед-дисплея
+#include <GyverOLED.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
 #include <TJpg_Decoder.h>   // Либа jpg'а
 #include <GyverTimer.h>     // Либа таймера
@@ -191,12 +191,7 @@ void setup() {
   }*/
   data.read();  // это заменяет то, что выше
 
-  while (!oled.init(IIC_SDA_PIN, IIC_SCL_PIN)) {  // Инициализация оледа
-    digitalWrite(LED_BUILTIN, LOW);               // Медленно мигаем пока не проинициализируем олед
-    delay(500);
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(500);
-  }
+  oled.init(IIC_SDA_PIN, IIC_SCL_PIN);  // Инициализация оледа
 
   for (uint8_t i = 0; i < 6; i++) {  // Индикатор УСПЕШНОГО запуска ESP
     digitalWrite(LED_BUILTIN, LOW);

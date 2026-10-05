@@ -1,5 +1,7 @@
 #include "utils.h"
 
+String _GP_empty_str;
+
 // ================== FILE TYPES ====================
 GP_PGM(_gp_types, "image,text,audio,video,application");
 GP_PGM(_gp_img, "ico,gif,bmp,jpeg,jpg,png,tif,tiff,svg,webp");
@@ -17,15 +19,15 @@ GP_PGM_LIST(_gp_ext, _gp_img, _gp_txt, _gp_au, _gp_vid, _gp_app);
 GP_PGM_LIST(_gp_val, _gp__img, _gp__txt, _gp__au, _gp__vid, _gp__app);
 
 String GPfileType(const String& uri) {
-    int div = uri.indexOf('.');
+    int div = uri.lastIndexOf('.');
     if (div >= 0) {
         String ext = uri.substring(div + 1, uri.length());
         for (int i = 0; i < 5; i++) {
-            int pos = GPinList(ext, FPSTR(pgm_read_dword(_gp_ext + i)));
+            int pos = GPinList(ext, FPSTR((const char*)pgm_read_dword(_gp_ext + i)));
             if (pos >= 0) {
                 ext = GPlistIdx(FPSTR(_gp_types), i);
                 ext += '/';
-                ext += GPlistIdx(FPSTR(pgm_read_dword(_gp_val + i)), pos);
+                ext += GPlistIdx(FPSTR((const char*)pgm_read_dword(_gp_val + i)), pos);
                 return ext;
             }
         }
@@ -83,7 +85,7 @@ int GPinList(const String& s, const String& li) {
     if (s == li) return 0;
     int p = 0, t = 0;
     while (1) {
-        t = li.lastIndexOf(s, p);
+        t = li.indexOf(s, p);
         if (t < 0) return -1;
         if (!t && li[t+l] == ',') break;
         if (t && li[t-1] == ',' && (li[t+l] == ',' || !li[t+l])) break;
@@ -98,7 +100,7 @@ String GPlistIdx(const String& li, int idx, char div) {
     while (1) {
         if (li[i] == div || !li[i]) {
             if (cnt == idx) return li.substring(p, i);
-            if (!li[i]) return String();
+            if (!li[i]) return _GP_empty_str;
             cnt++;
             p = i + 1;
         }

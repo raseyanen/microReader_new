@@ -59,7 +59,7 @@ void loop() {
 
 void testCast(const char* str) {
     Serial.println("========= CAST =========");
-    su::Text txt(str);
+    Text txt(str);
 
     // explicit
     Serial.println(String("toBool: ") + txt.toBool());
@@ -82,7 +82,7 @@ void testCast(const char* str) {
     uint32_t u32 = txt;
     // int64_t i64 = txt;
     // uint64_t u64 = txt;
-    bool b = txt;
+    // bool b = txt;
     float f = txt;
     double d = txt;
     String S = txt;
@@ -95,7 +95,7 @@ void testCast(const char* str) {
     Serial.println(String("uint32_t: ") + u32);
     // Serial.println(String("int64_t: ") + i64);
     // Serial.println(String("uint64_t: ") + u64);
-    Serial.println(String("bool: ") + b);
+    // Serial.println(String("bool: ") + b);
     Serial.println(String("float: ") + f);
     Serial.println(String("double: ") + d);
     Serial.println(String("String: ") + S);
@@ -173,31 +173,31 @@ void testString() {
 }
 void testCompare() {
     // true
-    Serial.println(su::Text("123") == su::Text(F("123")));
-    Serial.println(su::Text("abc") == su::Text(F("abc")));
-    Serial.println(su::Text("11111") == su::Text(F("11111")));
-    Serial.println(su::Text("11111") == su::Text(F("11111")));
+    Serial.println(Text("123") == Text(F("123")));
+    Serial.println(Text("abc") == Text(F("abc")));
+    Serial.println(Text("11111") == Text(F("11111")));
+    Serial.println(Text("11111") == Text(F("11111")));
 
     // false
-    Serial.println(su::Text(F("abc")) == su::Text(("123")));
-    Serial.println(su::Text(("1234")) == su::Text(F("123")));
-    Serial.println(su::Text(F("abc")) == su::Text(("abcd")));
+    Serial.println(Text(F("abc")) == Text(("123")));
+    Serial.println(Text(("1234")) == Text(F("123")));
+    Serial.println(Text(F("abc")) == Text(("abcd")));
 }
 void testCompareValue() {
     // true
-    Serial.println(su::Value(12345) == su::Text(F("12345")));
-    Serial.println(su::Value(3.14) == su::Text("3.14"));
-    Serial.println(su::Value('c') == su::Text("c"));
-    Serial.println(su::Value((uint64_t)12345654321) == su::Text("12345654321"));
+    Serial.println(Value(12345) == Text(F("12345")));
+    Serial.println(Value(3.14) == Text("3.14"));
+    Serial.println(Value('c') == Text("c"));
+    Serial.println(Value((uint64_t)12345654321) == Text("12345654321"));
 
     // false
-    Serial.println(su::Value(123456) == su::Text(F("12345")));
-    Serial.println(su::Value(3.0) == su::Text(F("3.14")));
-    Serial.println(su::Value(0) == su::Text(F("")));
+    Serial.println(Value(123456) == Text(F("12345")));
+    Serial.println(Value(3.0) == Text(F("3.14")));
+    Serial.println(Value(0) == Text(F("")));
 }
 template <typename T>
 void printValue(T val) {
-    su::Value v(val);
+    Value v(val);
     Serial.print(v);
     Serial.print(", len: ");
     Serial.println(v.length());

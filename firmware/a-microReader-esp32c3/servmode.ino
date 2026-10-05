@@ -2,12 +2,7 @@
 uint8_t servCursor = 0;
 
 void enterToServiceMode(void) {
-  while (!oled.init(IIC_SDA_PIN, IIC_SCL_PIN)) {  // Инициализация оледа
-    digitalWrite(LED_BUILTIN, LOW);               // Медленно мигаем пока не проинициализируем олед
-    delay(200);
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(200);
-  }
+  oled.init(IIC_SDA_PIN, IIC_SCL_PIN);
 
   oled.clear();       // Очистка оледа
   oled.update();      // Вывод пустой картинки

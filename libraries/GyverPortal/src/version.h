@@ -1,1 +1,1 @@
-#define GP_VERSION "3.6-b1"
+#define GP_VERSION "3.6.6"

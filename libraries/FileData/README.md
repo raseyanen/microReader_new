@@ -1,6 +1,7 @@
 [![latest](https://img.shields.io/github/v/release/GyverLibs/FileData.svg?color=brightgreen)](https://github.com/GyverLibs/FileData/releases/latest/download/FileData.zip)
+[![PIO](https://badges.registry.platformio.org/packages/gyverlibs/library/FileData.svg)](https://registry.platformio.org/libraries/gyverlibs/FileData)
 [![Foo](https://img.shields.io/badge/Website-AlexGyver.ru-blue.svg?style=flat-square)](https://alexgyver.ru/)
-[![Foo](https://img.shields.io/badge/%E2%82%BD$%E2%82%AC%20%D0%9D%D0%B0%20%D0%BF%D0%B8%D0%B2%D0%BE-%D1%81%20%D1%80%D1%8B%D0%B1%D0%BA%D0%BE%D0%B9-orange.svg?style=flat-square)](https://alexgyver.ru/support_alex/)
+[![Foo](https://img.shields.io/badge/%E2%82%BD%24%E2%82%AC%20%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C-%D0%B0%D0%B2%D1%82%D0%BE%D1%80%D0%B0-orange.svg?style=flat-square)](https://alexgyver.ru/support_alex/)
 [![Foo](https://img.shields.io/badge/README-ENGLISH-blueviolet.svg?style=flat-square)](https://github-com.translate.goog/GyverLibs/FileData?_x_tr_sl=ru&_x_tr_tl=en)  
 
 [![Foo](https://img.shields.io/badge/ПОДПИСАТЬСЯ-НА%20ОБНОВЛЕНИЯ-brightgreen.svg?style=social&logo=telegram&color=blue)](https://t.me/GyverLibs)
@@ -12,6 +13,8 @@
 - Поддержка любых типов статических данных
 - Отложенная запись по таймауту
 - "Обновление" данных - файл не перезапишется, если данные не изменились
+
+> Примечание: библиотека сохраняет **бинарные**, т.е. непригодные для чтения человеком данные. Если нужно хранение данных в файле в читаемом формате - используйте библиотеку [PairsFile](https://github.com/GyverLibs/Pairs)
 
 ### Совместимость
 ESP8266, ESP32
@@ -49,8 +52,8 @@ FileData;
 FileData(fs::FS* fs);
 FileData(fs::FS* fs, const char* path);
 FileData(fs::FS* fs, const char* path, uint8_t key);
-FileData(fs::FS* fs, const char* path, uint8_t key, void* data, uint16_t size);
-FileData(fs::FS* fs, const char* path, uint8_t key, void* data, uint16_t size, uint16_t tout);
+FileData(fs::FS* fs, const char* path, uint8_t key, void* data, size_t size);
+FileData(fs::FS* fs, const char* path, uint8_t key, void* data, size_t size, uint16_t tout);
 
 // fs - файловая система, адрес (&LittleFS, &SDFS..)
 // path - путь (имя) файла. Может быть любым, как и расширение ("/myData", "/data/settings.dat")
@@ -81,7 +84,7 @@ void setFS(fs::FS* nfs, const char* path);
 void setKey(uint8_t key);
 
 // подключить данные (переменную)
-void setData(void* data, uint16_t size);
+void setData(void* data, size_t size);
 
 // установить таймаут записи
 void setTimeout(uint16_t tout);
@@ -216,7 +219,7 @@ void loop() {
   // запишем в данные строку из монитора порта
   // а также присвоим остальным переменным случайные значения
   if (Serial.available()) {
-    int len = Serial.readBytes(mydata.str, 20);
+    int len = Serial.readBytes(mydata.str, sizeof(mydata.str) - 1);
     mydata.str[len] = '\0';
     mydata.val8 = random(255);
     mydata.val16 = random(65000);

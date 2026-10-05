@@ -6,10 +6,12 @@
 
 namespace su {
 
+// внешний буфер
 class StringExt : public Text {
    public:
-    StringExt(char* buf, uint16_t capacity) : capacity(capacity) {
+    StringExt(char* buf, uint16_t capacity, uint16_t len = 0) : capacity(capacity) {
         _str = buf;
+        _len = len;
     }
 
     // очистить
@@ -19,10 +21,7 @@ class StringExt : public Text {
 
     // завершить нулём
     void terminate() {
-        if (_len < capacity && !terminated()) {
-            concatChar(0);
-            _len--;
-        }
+        if (_str && _len < capacity) ((char*)_str)[_len] = 0;
     }
 
     // автоматически завершать нулём (умолч. false)
@@ -37,8 +36,10 @@ class StringExt : public Text {
 
     // прибавить
     bool concat(const Value& txt) {
-        if (!_str) return 0;
-        _len += txt.toStr((char*)_str + _len, capacity - _len, autoter);
+        if (!_str || _len > capacity) return 0;
+        uint16_t written = txt.toStr((char*)_str + _len, capacity - _len, autoter);
+        if (txt.length() && !written) return 0;
+        _len += written;
         return 1;
     }
 
@@ -135,158 +136,158 @@ class StringExt : public Text {
         return *this;
     }
 
-    StringExt& operator=(const char& value) {
+    StringExt& operator=(const char value) {
         assignChar(value);
         return *this;
     }
-    StringExt& operator+=(const char& value) {
+    StringExt& operator+=(const char value) {
         concatChar(value);
         return *this;
     }
-    StringExt& operator+(const char& value) {
+    StringExt& operator+(const char value) {
         concatChar(value);
         return *this;
     }
 
-    StringExt& operator=(const bool& value) {
-        assignChar(value + '0');
+    StringExt& operator=(const bool value) {
+        assignChar(value ? '1' : '0');
         return *this;
     }
-    StringExt& operator+=(const bool& value) {
-        concatChar(value + '0');
+    StringExt& operator+=(const bool value) {
+        concatChar(value ? '1' : '0');
         return *this;
     }
-    StringExt& operator+(const bool& value) {
-        concatChar(value + '0');
+    StringExt& operator+(const bool value) {
+        concatChar(value ? '1' : '0');
         return *this;
     }
 
-    StringExt& operator=(const double& value) {
+    StringExt& operator=(const double value) {
         assign(value, 2);
         return *this;
     }
-    StringExt& operator+=(const double& value) {
+    StringExt& operator+=(const double value) {
         concat(value, 2);
         return *this;
     }
-    StringExt& operator+(const double& value) {
+    StringExt& operator+(const double value) {
         concat(value, 2);
         return *this;
     }
 
-    StringExt& operator=(const unsigned char& value) {
+    StringExt& operator=(const unsigned char value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const unsigned char& value) {
+    StringExt& operator+=(const unsigned char value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const unsigned char& value) {
+    StringExt& operator+(const unsigned char value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const short& value) {
+    StringExt& operator=(const short value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const short& value) {
+    StringExt& operator+=(const short value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const short& value) {
+    StringExt& operator+(const short value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const unsigned short& value) {
+    StringExt& operator=(const unsigned short value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const unsigned short& value) {
+    StringExt& operator+=(const unsigned short value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const unsigned short& value) {
+    StringExt& operator+(const unsigned short value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const int& value) {
+    StringExt& operator=(const int value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const int& value) {
+    StringExt& operator+=(const int value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const int& value) {
+    StringExt& operator+(const int value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const unsigned int& value) {
+    StringExt& operator=(const unsigned int value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const unsigned int& value) {
+    StringExt& operator+=(const unsigned int value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const unsigned int& value) {
+    StringExt& operator+(const unsigned int value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const long& value) {
+    StringExt& operator=(const long value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const long& value) {
+    StringExt& operator+=(const long value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const long& value) {
+    StringExt& operator+(const long value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const unsigned long& value) {
+    StringExt& operator=(const unsigned long value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const unsigned long& value) {
+    StringExt& operator+=(const unsigned long value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const unsigned long& value) {
+    StringExt& operator+(const unsigned long value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const long long& value) {
+    StringExt& operator=(const long long value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const long long& value) {
+    StringExt& operator+=(const long long value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const long long& value) {
+    StringExt& operator+(const long long value) {
         concat(value);
         return *this;
     }
 
-    StringExt& operator=(const unsigned long long& value) {
+    StringExt& operator=(const unsigned long long value) {
         assign(value);
         return *this;
     }
-    StringExt& operator+=(const unsigned long long& value) {
+    StringExt& operator+=(const unsigned long long value) {
         concat(value);
         return *this;
     }
-    StringExt& operator+(const unsigned long long& value) {
+    StringExt& operator+(const unsigned long long value) {
         concat(value);
         return *this;
     }
@@ -295,28 +296,35 @@ class StringExt : public Text {
     uint16_t capacity = 0;
     bool autoter = false;
 
-    void concatChar(const char& sym) {
-        if (!_str || _len + 1 > capacity) return;
+    bool _concatChar(const char sym) {
+        if (!_str || _len + 1 > capacity) return 0;
         ((char*)_str)[_len] = sym;
         _len++;
+        return 1;
     }
-    void assignChar(const char& sym) {
+    void concatChar(const char sym) {
+        _concatChar(sym);
+        if (autoter) terminate();
+    }
+    void assignChar(const char sym) {
         if (!_str) return;
         _len = 0;
-        concat(sym);
+        concatChar(sym);
     }
 };
 
+// встроенный буфер
 template <uint16_t cap>
 class StringStatic : public StringExt {
    public:
     StringStatic() : StringExt(buf, cap) {}
 
     using StringExt::operator=;
+    using StringExt::operator+;
     using StringExt::operator+=;
 
    private:
-    char buf[cap];
+    char buf[cap] = {};
 };
 
 }  // namespace su

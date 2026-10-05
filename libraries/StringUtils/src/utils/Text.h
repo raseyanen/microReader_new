@@ -1,15 +1,92 @@
 #pragma once
 #include <Arduino.h>
+#include <limits.h>
 
-#include "convert/b64.h"
-#include "convert/convert.h"
-#include "convert/unicode.h"
-#include "hash.h"
+#include "./convert/b64.h"
+#include "./convert/convert.h"
+#include "./convert/unicode.h"
+#include "./convert/url.h"
+#include "./hash.h"
 
 namespace su {
 
 class Text : public Printable {
    public:
+    class Cstr {
+       public:
+        Cstr(Cstr& val) {
+            move(val);
+        }
+        Cstr& operator=(Cstr& val) {
+            move(val);
+            return *this;
+        }
+
+#if __cplusplus >= 201103L
+        Cstr(Cstr&& rval) noexcept {
+            move(rval);
+        }
+        Cstr& operator=(Cstr&& rval) noexcept {
+            move(rval);
+            return *this;
+        }
+#endif
+
+        Cstr(const Text& t, bool forceDup = false) {
+            if (!t.length()) return;
+            if (!t.pgm() && t.terminated() && !forceDup) {
+                str = t.str();
+                len = t.length();
+                return;
+            }
+            char* tstr = new char[t.length() + 1];
+            if (!tstr) return;
+            t.toStr(tstr);
+            str = tstr;
+            len = t.length();
+            del = true;
+        }
+
+        ~Cstr() {
+            reset();
+        }
+
+        operator const char*() const {
+            return str;
+        }
+
+        explicit operator bool() const {
+            return len;
+        }
+
+        void reset() {
+            if (del) delete[] str;
+            str = "";
+            len = 0;
+            del = false;
+        }
+
+        uint16_t length() {
+            return len;
+        }
+
+       private:
+        const char* str = "";
+        uint16_t len = 0;
+        bool del = false;
+
+        void move(Cstr& val) noexcept {
+            if (this == &val) return;
+            reset();
+            str = val.str;
+            len = val.len;
+            del = val.del;
+            val.str = "";
+            val.del = 0;
+            val.len = 0;
+        }
+    };
+
     enum class Type : uint8_t {
         constChar,  // const char*
         pgmChar,    // PROGMEM
@@ -24,8 +101,8 @@ class Text : public Printable {
 
     // ========================== CONSTRUCTOR ==========================
     Text() {}
-    Text(const __FlashStringHelper* str, int16_t len = -1) : _str((PGM_P)str), _len(len >= 0 ? len : strlen_P((PGM_P)str)), _type(Type::pgmChar) {}
-    Text(const char* str, int16_t len = -1, bool pgm = 0) : _str(str), _len(len >= 0 ? len : (pgm ? strlen_P(str) : strlen(str ? str : ""))), _type(pgm ? Type::pgmChar : Type::constChar) {}
+    Text(const __FlashStringHelper* str, int16_t len = -1) : _str((PGM_P)str), _len(len >= 0 ? len : (str ? strlen_P((PGM_P)str) : 0)), _type(Type::pgmChar) {}
+    Text(const char* str, int16_t len = -1, bool pgm = 0) : _str(str), _len(len >= 0 ? len : (str ? (pgm ? strlen_P(str) : strlen(str)) : 0)), _type(pgm ? Type::pgmChar : Type::constChar) {}
     Text(const uint8_t* str, uint16_t len) : _str((const char*)str), _len(len) {}
     Text(const String& str) : _str(str.c_str()), _len(str.length()) {}
 
@@ -45,9 +122,33 @@ class Text : public Printable {
         if (!length()) return 0;
         uint16_t count = 0;
         for (uint16_t i = 0; i < _len; i++) {
-            if ((_charAt(i) & 0xc0) != 0x80) count++;
+            if ((_charAt(i) & 0xc0) != 0x80) ++count;
         }
         return count;
+    }
+
+    // получить реальную позицию символа в строке, если она содержит юникод
+    uint16_t unicodeToPos(uint16_t upos) const {
+        if (!length() || upos > length()) return 0;
+
+        for (uint16_t i = 0; i < _len; i++) {
+            if ((_charAt(i) & 0xc0) != 0x80) {
+                if (!upos) return i;
+                else --upos;
+            }
+        }
+        return 0;
+    }
+
+    // получить позицию юникод символа в строке, если она содержит юникод
+    uint16_t posToUnicode(uint16_t pos) const {
+        if (!length() || pos > length()) return 0;
+
+        uint16_t u = 0;
+        for (uint16_t i = 0; i < pos; i++) {
+            if ((_charAt(i) & 0xc0) != 0x80) ++u;
+        }
+        return u;
     }
 
     // посчитать и вернуть длину строки (const)
@@ -70,6 +171,11 @@ class Text : public Printable {
         return valid() ? _str : "";
     }
 
+    // Получить указатель на строку. Всегда вернёт указатель, отличный от nullptr!
+    const uint8_t* bytes() const {
+        return (const uint8_t*)(valid() ? _str : "");
+    }
+
     // указатель на конец строки
     const char* end() const {
         return valid() ? (_str + _len) : "";
@@ -80,12 +186,16 @@ class Text : public Printable {
         return _str;
     }
 
+    explicit inline operator bool() const {
+        return _str;
+    }
+
     // строка валидна и оканчивается \0
     bool terminated() const {
         return (valid()) ? (_charAt(_len) == 0) : 0;
     }
 
-    // Напечатать в Print
+    // Напечатать в Print virtual
     size_t printTo(Print& p) const {
         if (!length()) return 0;
         size_t ret = 0;
@@ -136,13 +246,13 @@ class Text : public Printable {
        @return false строки не совпадают
     */
     bool compare(const char* s) const {
-        return (length() && s) ? !_compare(_str, s, false, _len) : 0;
+        return (valid() && s) ? !_compare(_str, s, false, _len) : 0;
     }
     bool compare(const __FlashStringHelper* s) const {
-        return (length() && s) ? !_compare(_str, (PGM_P)s, true, _len) : 0;
+        return (valid() && s) ? !_compare(_str, (PGM_P)s, true, _len) : 0;
     }
     bool compare(const Text& txt) const {
-        return (txt.length() == _len) ? !_compareN(_str, txt._str, txt.pgm(), _len) : 0;
+        return (valid() && txt.valid() && txt._len == _len) ? !_compareN(_str, txt._str, txt.pgm(), _len) : 0;
     }
 
     /**
@@ -159,10 +269,10 @@ class Text : public Printable {
         return !_compareN(_str + from, txt._str, txt.pgm(), amount);
     }
     bool compareN(const char* s, uint16_t amount, uint16_t from = 0) const {
-        return (valid() && from + amount <= _len) ? !_compareN(_str + from, s, false, amount) : 0;
+        return (valid() && s && from + amount <= _len) ? !_compareN(_str + from, s, false, amount) : 0;
     }
     bool compareN(const __FlashStringHelper* s, uint16_t amount, uint16_t from = 0) const {
-        return (valid() && from + amount <= _len) ? !_compareN(_str + from, (PGM_P)s, true, amount) : 0;
+        return (valid() && s && from + amount <= _len) ? !_compareN(_str + from, (PGM_P)s, true, amount) : 0;
     }
 
     // ========================== SEARCH ==========================
@@ -174,12 +284,21 @@ class Text : public Printable {
         return (idx < 0) ? nullptr : (_str + idx);
     }
 
+    // начинается с
+    bool startsWith(char c) const {
+        return length() ? (_charAt(0) == c) : 0;
+    }
+
     // начинается со строки
     bool startsWith(const char* s) const {
-        return length() ? !_compareEnd(_str, s, false, _len) : 0;
+        if (!length() || !s) return 0;
+        uint16_t len = strlen(s);
+        return len && len <= _len ? !_compareN(_str, s, false, len) : 0;
     }
     bool startsWith(const __FlashStringHelper* s) const {
-        return length() ? !_compareEnd(_str, (PGM_P)s, true, _len) : 0;
+        if (!length() || !s) return 0;
+        uint16_t len = strlen_P((PGM_P)s);
+        return len && len <= _len ? !_compareN(_str, (PGM_P)s, true, len) : 0;
     }
     bool startsWith(const Text& txt) const {
         return (length() && txt.length() && txt._len <= _len) ? !_compareN(_str, txt._str, txt.pgm(), txt._len) : 0;
@@ -188,6 +307,9 @@ class Text : public Printable {
     // заканчивается строкой
     bool endsWith(const Text& txt) const {
         return (length() && txt.length() && txt._len <= _len) ? !_compareN(_str + _len - txt._len, txt._str, txt.pgm(), txt._len) : 0;
+    }
+    bool endsWith(char c) const {
+        return length() ? (_charAt(_len - 1) == c) : 0;
     }
 
     // Найти позицию символа в строке
@@ -208,18 +330,24 @@ class Text : public Printable {
         return -1;
     }
     int16_t indexOf(const char* s, uint16_t from = 0) const {
-        if (!length()) return -1;
-        for (uint16_t i = from; i < _len; i++) {
-            if (!_compareEnd(_str + i, s, false, _len - i)) return i;
-        }
-        return -1;
+        return s ? indexOf(Text(s), from) : -1;
     }
     int16_t indexOf(const __FlashStringHelper* s, uint16_t from = 0) const {
-        if (!length()) return -1;
-        for (uint16_t i = from; i < _len; i++) {
-            if (!_compareEnd(_str + i, (PGM_P)s, true, _len - i)) return i;
-        }
-        return -1;
+        return s ? indexOf(Text(s), from) : -1;
+    }
+
+    // Найти позицию строки в строке, результат в юникод-позиции
+    int16_t indexOfUnicode(const Text& txt, uint16_t from = 0) const {
+        int16_t pos = indexOf(txt, from);
+        return pos > 0 ? posToUnicode(pos) : pos;
+    }
+    int16_t indexOfUnicode(const char* s, uint16_t from = 0) const {
+        int16_t pos = indexOf(s, from);
+        return pos > 0 ? posToUnicode(pos) : pos;
+    }
+    int16_t indexOfUnicode(const __FlashStringHelper* s, uint16_t from = 0) const {
+        int16_t pos = indexOf(s, from);
+        return pos > 0 ? posToUnicode(pos) : pos;
     }
 
     /**
@@ -250,6 +378,12 @@ class Text : public Printable {
         return -1;
     }
 
+    // Найти позицию строки в строке с конца, результат в юникод-позиции
+    int16_t lastIndexOfUnicode(const Text& txt) const {
+        int16_t pos = lastIndexOf(txt);
+        return pos > 0 ? posToUnicode(pos) : pos;
+    }
+
     // ========================== SUB ==========================
 
     // Посчитать количество подстрок, разделённых символом (количество разделителей +1)
@@ -257,7 +391,7 @@ class Text : public Printable {
         if (!length()) return 0;
         uint16_t sum = 1;
         for (uint16_t i = 0; i < _len; i++) {
-            if (_charAt(i) == sym) sum++;
+            if (_charAt(i) == sym) ++sum;
         }
         return sum;
     }
@@ -271,7 +405,7 @@ class Text : public Printable {
             pos = indexOf(txt, pos);
             if (pos < 0) break;
             pos += txt._len;
-            sum++;
+            ++sum;
         }
         return sum;
     }
@@ -291,10 +425,10 @@ class Text : public Printable {
             if (end < 0) end = _len;
             if (!idx--) return Text(_str + start, end - start, pgm());
             if ((uint16_t)end == _len) break;
-            end++;
+            ++end;
             start = end;
         }
-        return Text();
+        return *this;
     }
 
     /**
@@ -315,7 +449,44 @@ class Text : public Printable {
             end += div._len;
             start = end;
         }
-        return Text();
+        return *this;
+    }
+
+    /**
+      @brief Получить индекс подстроки
+
+      @param sub подстрока
+      @param div разделитель
+      @return int индекс, -1 если не найдено
+    */
+    int findSub(const Text& sub, char div) const {
+        if (!length()) return -1;
+        int16_t start = 0, end = 0, i = 0;
+        while (1) {
+            end = indexOf(div, end);
+            if (end < 0) end = _len;
+            if (Text(_str + start, end - start, pgm()) == sub) return i;
+            if ((uint16_t)end == _len) break;
+            ++end;
+            start = end;
+            ++i;
+        }
+        return -1;
+    }
+
+    int findSub(const Text& sub, const Text& div) const {
+        if (!length() || !div.length() || div._len > _len) return -1;
+        int16_t start = 0, end = 0, i = 0;
+        while (1) {
+            end = indexOf(div, end);
+            if (end < 0) end = _len;
+            if (Text(_str + start, end - start, pgm()) == sub) return i;
+            if ((uint16_t)end == _len) break;
+            end += div._len;
+            start = end;
+            ++i;
+        }
+        return -1;
     }
 
     // ========================== SPLIT ==========================
@@ -332,7 +503,11 @@ class Text : public Printable {
     uint16_t split(T* arr, uint16_t len, char div) const {
         if (!len || !length()) return 0;
         find_t f;
-        while (!f.last) arr[f.count - 1] = _parse(div, 1, len, f);
+
+        while (!f.last) {
+            Text txt = _parse(div, 1, len, f);
+            arr[f.count - 1] = txt;
+        }
         return f.count;
     }
 
@@ -340,7 +515,11 @@ class Text : public Printable {
     uint16_t split(T** arr, uint16_t len, char div) const {
         if (!len || !length()) return 0;
         find_t f;
-        while (!f.last) *(arr[f.count - 1]) = _parse(div, 1, len, f);
+
+        while (!f.last) {
+            Text txt = _parse(div, 1, len, f);
+            *(arr[f.count - 1]) = txt;
+        }
         return f.count;
     }
 
@@ -356,7 +535,10 @@ class Text : public Printable {
     uint16_t split(T* arr, uint16_t len, const Text& div) const {
         if (!len || !length() || !div.length() || div._len > _len) return 0;
         find_t f;
-        while (!f.last) arr[f.count - 1] = _parse(div, div._len, len, f);
+        while (!f.last) {
+            Text txt = _parse(div, div._len, len, f);
+            arr[f.count - 1] = txt;
+        }
         return f.count;
     }
 
@@ -364,7 +546,10 @@ class Text : public Printable {
     uint16_t split(T** arr, uint16_t len, const Text& div) const {
         if (!len || !length() || !div.length() || div._len > _len) return 0;
         find_t f;
-        while (!f.last) *(arr[f.count - 1]) = _parse(div, div._len, len, f);
+        while (!f.last) {
+            Text txt = _parse(div, div._len, len, f);
+            *(arr[f.count - 1]) = txt;
+        }
         return f.count;
     }
 
@@ -377,13 +562,13 @@ class Text : public Printable {
         while (txt._len) {
             uint8_t sym = txt._charAt(0);
             if (sym && (sym <= 0x0F || sym == ' ')) {
-                txt._str++;
-                txt._len--;
+                ++txt._str;
+                --txt._len;
             } else break;
         }
         while (txt._len) {
             uint8_t sym = txt._charAt(txt._len - 1);
-            if (sym <= 0x0F || sym == ' ') txt._len--;
+            if (sym <= 0x0F || sym == ' ') --txt._len;
             else break;
         }
         return txt;
@@ -395,7 +580,7 @@ class Text : public Printable {
         if (start < 0) start += _len;
         if (!end) end = _len;
         else if (end < 0) end += _len;
-        if (start > (int16_t)_len || end > (int16_t)_len) return Text();
+        if (start < 0 || end < 0 || start > (int16_t)_len || end > (int16_t)_len) return Text();
 
         if (end && end < start) {
             int16_t b = end;
@@ -405,7 +590,19 @@ class Text : public Printable {
         return Text(_str + start, end - start, pgm());
     }
 
-    // Добавить к String строке. Вернёт false при неудаче
+    // выделить подстроку с содержанием юникода (начало, конец не включая). Отрицательные индексы работают с конца строки
+    Text substringUnicode(int16_t start, int16_t end = 0) const {
+        if (!length()) return Text();
+        uint16_t ulen = lengthUnicode();
+        if (start < 0 || end < 0) {
+            if (start < 0) start += ulen;
+            if (end < 0) end += ulen;
+        }
+        if (start < 0 || end < 0 || start > (int16_t)ulen || end > (int16_t)ulen) return Text();
+        return substring(unicodeToPos(start), end ? unicodeToPos(end) : 0);
+    }
+
+    // Добавить к String строке. Вернёт false при неудаче virtual
     bool addString(String& s) const {
         if (!length() || !_len) return 0;
         if (!s.reserve(s.length() + _len)) return 0;
@@ -427,34 +624,40 @@ class Text : public Printable {
             }
 #endif
         }
-
         return 1;
     }
 
     // Добавить к String строке. Вернёт false при неудаче
     bool addString(String& s, bool decodeUnicode) const {
-        if (!valid() || !_len) return 0;
+        if (!length() || pgm()) return 0;
         if (decodeUnicode) {
-            if (pgm()) {
-                char str[_len + 1];
-                strncpy_P(str, _str, _len);
-                str[_len] = 0;
-                s += unicode::decode(str, _len);
-            } else {
-                s += unicode::decode(_str, _len);
-            }
+            s += unicode::decode(_str, _len);
         } else {
             addString(s);
         }
         return 1;
     }
 
-    // Получить символ по индексу
-    char charAt(uint16_t idx) const {
-        return (valid() && idx < _len) ? _charAt(idx) : 0;
+    // получить как строку, раскодировать unicode
+    String decodeUnicode() const {
+        if (!length() || pgm()) return String();
+        return unicode::decode(_str, _len);
     }
 
-    // Получить символ по индексу
+    // получить как строку, раскодировать urlencode
+    String decodeUrl() const {
+        if (!length() || pgm()) return String();
+        return url::decode(_str, _len);
+    }
+
+    // Получить символ по индексу. Допускаются отрицательные
+    char charAt(int idx) const {
+        if (idx < 0) idx += length();
+        if (idx < 0) return 0;
+        return (valid() && (uint16_t)idx < _len) ? _charAt(idx) : 0;
+    }
+
+    // Получить символ по индексу. Допускаются отрицательные
     char operator[](int idx) const {
         return charAt(idx);
     }
@@ -490,17 +693,34 @@ class Text : public Printable {
 
     // ========================== CONVERT ==========================
 
+    // получить const char* копию (Cstr конвертируется в const char*). Всегда валидна и терминирована. Если Text из PGM или не терминирован - будет создана временная копия
+    Cstr c_str(bool forceDup = false) const {
+        return Cstr(*this, forceDup);
+    }
+
     // Вывести в String строку. Вернёт false при неудаче
-    bool toString(String& s, bool decodeUnicode = false) const {
+    bool toString(String& s) const {
+        s = "";
+        return addString(s);
+    }
+
+    // Вывести в String строку. Вернёт false при неудаче
+    bool toString(String& s, bool decodeUnicode) const {
         s = "";
         return addString(s, decodeUnicode);
     }
 
     // Получить как String строку
-    String toString(bool decodeUnicode = false) const {
-        if (!valid() || !_len) return String();
+    String toString() const {
         String s;
-        toString(s, decodeUnicode);
+        addString(s);
+        return s;
+    }
+
+    // Получить как String строку
+    String toString(bool decodeUnicode) const {
+        String s;
+        addString(s, decodeUnicode);
         return s;
     }
 
@@ -519,7 +739,16 @@ class Text : public Printable {
 
     // получить значение как bool
     bool toBool() const {
-        return valid() && (charAt(0) == 't' || charAt(0) == '1');
+        return length() && (_charAt(0) == 't' || _charAt(0) == '1');
+    }
+
+    // получить значение как int
+    int toInt() const {
+#if (UINT_MAX == UINT32_MAX)
+        return toInt32();
+#else
+        return toInt16();
+#endif
     }
 
     // получить значение как int 16
@@ -543,6 +772,14 @@ class Text : public Printable {
         if (_len > 2 && _charAt(0) == '0' && _charAt(1) == 'x') i += 2;
         for (; i < _len; i++) {
             char sym = _charAt(i);
+            switch (sym) {
+                case '0' ... '9':
+                case 'a' ... 'f':
+                case 'A' ... 'F':
+                    break;
+                default:
+                    return v;
+            }
             v <<= 4;
             v += (sym & 0xf) + (sym > '9' ? 9 : 0);
         }
@@ -564,158 +801,77 @@ class Text : public Printable {
             strncpy_P(buf, _str, _len);
             buf[_len] = 0;
             return atof(buf);
+        } else if (!terminated()) {
+            char buf[_len + 1];
+            strncpy(buf, _str, _len);
+            buf[_len] = 0;
+            return atof(buf);
         } else {
             return atof(_str);
         }
     }
 
-    // ================= CAST =================
-    // bool
-    operator bool() const {
-        return toBool();
-    }
-    bool operator==(const bool& v) const {
-        return toBool() == v;
-    }
-    bool operator!=(const bool& v) const {
-        return toBool() != v;
-    }
-
-    // signed char
-    operator signed char() const {
-        return (char)toInt16();
-    }
-    bool operator==(const signed char& v) const {
-        return toInt16() == v;
-    }
-    bool operator!=(const signed char& v) const {
-        return toInt16() != v;
+// ================= CAST =================
+#define T_MAKE_COMPARE(T, func)        \
+    bool operator==(const T v) const { \
+        return (T)func() == v;         \
+    }                                  \
+    bool operator!=(const T v) const { \
+        return (T)func() != v;         \
+    }                                  \
+    bool operator>(const T v) const {  \
+        return (T)func() > v;          \
+    }                                  \
+    bool operator<(const T v) const {  \
+        return (T)func() < v;          \
+    }                                  \
+    bool operator>=(const T v) const { \
+        return (T)func() >= v;         \
+    }                                  \
+    bool operator<=(const T v) const { \
+        return (T)func() <= v;         \
     }
 
-    // unsigned char
-    operator unsigned char() const {
-        return toInt16();
-    }
-    bool operator==(const unsigned char& v) const {
-        return (unsigned char)toInt16() == v;
-    }
-    bool operator!=(const unsigned char& v) const {
-        return (unsigned char)toInt16() != v;
-    }
+#define T_MAKE_OPERATOR_EXPL(T, func) \
+    explicit operator T() const {     \
+        return (T)func();             \
+    }                                 \
+    T_MAKE_COMPARE(T, func)
 
-    // short
-    operator short() const {
-        return toInt16();
-    }
-    bool operator==(const short& v) const {
-        return toInt16() == v;
-    }
-    bool operator!=(const short& v) const {
-        return toInt16() != v;
-    }
+#define T_MAKE_OPERATOR(T, func) \
+    operator T() const {         \
+        return (T)func();        \
+    }                            \
+    T_MAKE_COMPARE(T, func)
 
-    // unsigned short
-    operator unsigned short() const {
-        return toInt16();
-    }
-    bool operator==(const unsigned short& v) const {
-        return (unsigned short)toInt16() == v;
-    }
-    bool operator!=(const unsigned short& v) const {
-        return (unsigned short)toInt16() != v;
-    }
+    //
+    T_MAKE_OPERATOR_EXPL(char, toInt16)
+    T_MAKE_OPERATOR(signed char, toInt16)
+    T_MAKE_OPERATOR(unsigned char, toInt16)
+    T_MAKE_OPERATOR(short, toInt16)
+    T_MAKE_OPERATOR(unsigned short, toInt16)
+    T_MAKE_OPERATOR(int, toInt)
+    T_MAKE_OPERATOR(unsigned int, toInt)
+    T_MAKE_OPERATOR(long, toInt32)
+    T_MAKE_OPERATOR(unsigned long, toInt32)
+    T_MAKE_OPERATOR(long long, toInt64)
+    T_MAKE_OPERATOR(unsigned long long, toInt64)
+    T_MAKE_OPERATOR(float, toFloat)
+    T_MAKE_OPERATOR(double, toFloat)
 
-    // int
-    operator int() const {
-        return (sizeof(int) == 2) ? toInt16() : toInt32();
+    bool operator==(const bool v) const {
+        return length() && (v ? (_charAt(0) == 't' || _charAt(0) == '1') : (_charAt(0) == 'f' || _charAt(0) == '0'));
     }
-    bool operator==(const int& v) const {
-        return toInt16() == v;
-    }
-    bool operator!=(const int& v) const {
-        return toInt16() != v;
-    }
-
-    // unsigned int
-    operator unsigned int() const {
-        return (sizeof(int) == 2) ? toInt16() : toInt32();
-    }
-    bool operator==(const unsigned int& v) const {
-        return (unsigned int)toInt16() == v;
-    }
-    bool operator!=(const unsigned int& v) const {
-        return (unsigned int)toInt16() != v;
-    }
-
-    // long
-    operator long() const {
-        return toInt32();
-    }
-    bool operator==(const long& v) const {
-        return toInt32() == v;
-    }
-    bool operator!=(const long& v) const {
-        return toInt32() != v;
-    }
-
-    // unsigned long
-    operator unsigned long() const {
-        return toInt32();
-    }
-    bool operator==(const unsigned long& v) const {
-        return (unsigned long)toInt32() == v;
-    }
-    bool operator!=(const unsigned long& v) const {
-        return (unsigned long)toInt32() != v;
-    }
-
-    // long long
-    operator long long() const {
-        return toInt64();
-    }
-    bool operator==(const long long& v) const {
-        return toInt64() == v;
-    }
-    bool operator!=(const long long& v) const {
-        return toInt64() != v;
-    }
-
-    // unsigned long long
-    operator unsigned long long() const {
-        return toInt64();
-    }
-    bool operator==(const unsigned long long& v) const {
-        return (unsigned long long)toInt64() == v;
-    }
-    bool operator!=(const unsigned long long& v) const {
-        return (unsigned long long)toInt64() != v;
-    }
-
-    // float
-    operator float() const {
-        return toFloat();
-    }
-    bool operator==(const float& v) const {
-        return toFloat() == v;
-    }
-    bool operator!=(const float& v) const {
-        return toFloat() != v;
-    }
-
-    // double
-    operator double() const {
-        return toFloat();
-    }
-    bool operator==(const double& v) const {
-        return toFloat() == v;
-    }
-    bool operator!=(const double& v) const {
-        return toFloat() != v;
+    bool operator!=(const bool v) const {
+        return *this == !v;
     }
 
     operator String() const {
         return toString();
     }
+    // operator const char*() const {
+    //     return c_str();
+    // }
 
     const char* _str = nullptr;
     uint16_t _len = 0;
@@ -731,7 +887,7 @@ class Text : public Printable {
         if (f.count) f.start = f.end = f.end + divlen;
         f.end = indexOf(div, f.end);
         if (f.end < 0 || f.count + 1 == len) f.end = _len;
-        f.count++;
+        ++f.count;
         if (f.count == len || f.end == (int16_t)_len) f.last = 1;
         return Text(_str + f.start, f.end - f.start, pgm());
     }
@@ -740,7 +896,7 @@ class Text : public Printable {
     uint16_t _compareN(const char* s1, const char* s2, bool pgm2, uint16_t len) const {
         while (len) {
             if ((pgm() ? pgm_read_byte(s1++) : *s1++) != (pgm2 ? pgm_read_byte(s2++) : *s2++)) return len;
-            len--;
+            --len;
         }
         return 0;
     }

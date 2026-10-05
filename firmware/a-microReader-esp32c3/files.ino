@@ -99,7 +99,7 @@ void enterToReadBmpFile(void) {
   }
 
   oled.clear();                             // Чистим олед
-  oled.drawBmpFromRam(0, 0, img, 128, 64);  // Выводим картинку
+  oled.drawBitmap(0, 0, img, 128, 64);  // Выводим картинку
   oled.update();                            // Обновляем олед
   file.close();                             // Закрываем файл
 
@@ -133,7 +133,7 @@ void enterToReadBmpFile(void) {
         file.close();        // Закрываем файл
         return;              // Выходим
       }
-      oled.drawBmpFromRam(0, 0, img, 128, 64);  // Выводим картинку
+      oled.drawBitmap(0, 0, img, 128, 64);  // Выводим картинку
       oled.update();       // Обновить
       file.close();        // Закрываем файл
     }

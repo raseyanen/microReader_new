@@ -19,6 +19,7 @@ extern WebServer *_gp_s;
 #include "TimeTicker.h"
 #include "canvas.h"
 #include "scripts.h"
+#include "parsers.h"
 
 extern int _gp_bufsize;
 extern String* _GPP;
@@ -37,7 +38,7 @@ extern const char* _gp_mdns;
 #endif
 
 // ============================= CLASS ===========================
-class GyverPortal : public TimeTicker {
+class GyverPortal : public TimeTicker, public ArgParser {
 public:
     // ======================= КОНСТРУКТОР =======================
     GyverPortal() {
@@ -67,7 +68,7 @@ public:
     void clearCache() {
         _gp_seed = random(0xff);
     }
-
+ 
     // ========================= СИСТЕМА =========================
     // запустить портал. Можно передать имя MDNS (оставь пустым "" если MDNS не нужен) и порт
     void start(const char* mdns = "", uint16_t port = 80) {
@@ -95,8 +96,25 @@ public:
         #endif
         
         server.onNotFound([this]() {
+            /*Serial.print(server.uri());
+            if (server.args()) {
+                Serial.print('?');
+                for (int i = 0; i < server.args(); i++) {
+                    Serial.print(server.argName(i));
+                    Serial.print('=');
+                    Serial.print(server.arg(i));
+                    if (i < server.args() - 1) Serial.print('&');
+                }
+            }
+            Serial.println();*/
+            
             _onlTmr = millis();
             if (_auth && !server.authenticate(_login, _pass)) return server.requestAuthentication();
+            String valS = server.arg(0);
+            _argValPtr = &valS;
+            String nameS = server.argName(0);
+            _argNamePtr = &nameS;
+            
             _showPage = 0;
             _uri = server.uri();
             if (_uri.startsWith(F("/GP_click"))) {              // клик
@@ -109,12 +127,15 @@ public:
                 if (_holdF == 1) _hold = server.argName(0);
                 else _hold = "";
                 server.send(200);
+            } else if (_uri.startsWith(F("/hotspot-detect.html"))) {    // AP
+                _showPage = 1;
                 
                 #ifdef GP_NO_DOWNLOAD
             } else if (_uri.startsWith(F("/favicon.ico"))) {    // иконка
                 server.send(200);
                 return;
                 #endif
+                
             } else if (_uri.startsWith(F("/GP_ping"))) {        // пинг
                 server.send(200);
                 return;
@@ -178,11 +199,13 @@ public:
             } else if (_uri.startsWith(F("/GP_upload"))) {
                 server.send(200, "text/html", F("<meta http-equiv='refresh' content='0; url=/'/>"));
                 return;
+                
                 #if defined(FS_H) && !defined(GP_NO_DOWNLOAD)
             } else if (downOn && !server.args() && _uri[0] == '/' && _uri.indexOf('.') > 0) {   // файл
                 if (_autoD && _fs) sendFile(_fs->open(_uri, "r"));  // авто скачивание
                 else _fileDF = 1;                                   // ручное скачивание (в action)
                 #endif
+                
             } else if (server.argName(0).equals(F("GP_form"))) {    // форма
                 _showPage = 1;
                 _formF = 1;
@@ -190,17 +213,21 @@ public:
             } else {                                                // любой другой запрос
                 _showPage = 1;
                 _reqF = 1;
-                if (log.available()) log.clear();
+                //if (log.available()) log.clear();
             }
             
             _gp_local_unix = getUnix() + getGMT() * 60;
 
             if (_action) _action();                 // вызов обычного обработчика действий
             else if (_actionR) _actionR(*this);     // вызов обработчика действий с объектом
-            if (_showPage) show();                  // показать страницу            
+            if (_showPage) show();                  // показать страницу
+            
+            _argValPtr = nullptr;
+            _argNamePtr = nullptr;
 
             if (_fileDF) server.send(200);  // юзер не ответил на update или не отправил файл
-            _reqF = _fileDF = _clickF = _formF = _delF = _renF = _holdF = 0;     // скидываем флаги
+            _reqF = _fileDF = _clickF = _formF = _delF = _renF = 0;     // скидываем флаги
+            _holdF = 0;
         });
         
         #if defined(FS_H) && !defined(GP_NO_UPLOAD)
@@ -212,6 +239,7 @@ public:
             if (!_autoU && !_action && !_actionR) return;
             HTTPUpload& upl = server.upload();
             if (!upl.filename.length()) return;
+            
             _filePtr = &upl.filename;
             _namePtr = &upl.name;
             
@@ -272,7 +300,6 @@ public:
                 //server.send(200, "text/html", F("<h2>Upload Error, <a href='/'>return back</a></h2>"));
                 break;
             }
-            
         });
         #endif
     }
@@ -435,7 +462,7 @@ public:
     
     // имя (путь) файла для удаления. Начинается с '/'
     String deletePath() {
-        return deleteFile() ? server.argName(0) : String();
+        return deleteFile() ? server.argName(0) : _GP_empty_str;
     }
     
     
@@ -452,12 +479,12 @@ public:
     
     // имя (путь) файла для переименования. Начинается с '/'
     String renamePath() {
-        return renameFile() ? server.argName(0) : String();
+        return renameFile() ? server.argName(0) : _GP_empty_str;
     }
     
     // новое имя (путь) файла
     String renamePathTo() {
-        return renameFile() ? server.arg(0) : String();
+        return renameFile() ? server.arg(0) : _GP_empty_str;
     }
     
     
@@ -558,373 +585,6 @@ public:
         return form() ? _uri.startsWith(name) : 0;
     }
     
-
-    // ======================= CLICK =======================
-    // вернёт true, если был клик по (кнопка, чекбокс, свитч, слайдер, селектор)
-    bool click() {
-        return _clickF && server.args();
-    }
-    
-    // вернёт true, если был клик по указанному элементу (кнопка, чекбокс, свитч, слайдер, селектор)
-    bool click(const String& name) {
-        return click() ? (server.argName(0).equals(name) && server.args() == 1) : 0;
-    }
-    
-    // вернёт true, если имя кликнутого компонента начинается с name
-    bool clickSub(const String& name) {
-        return click() ? (server.argName(0).startsWith(name) && server.args() == 1) : 0;
-    }
-    
-    // вернёт имя теукщего кликнутого компонента
-    String clickName() {
-        return click() ? server.argName(0) : String();
-    }
-    
-    // вернёт часть имени кликнутого компонента, находящейся под номером idx после разделителя /
-    String clickNameSub(int idx = 1) {
-        return click() ? (GPlistIdx(server.argName(0), idx, '/')) : String();
-    }
-    
-    
-    // HOLD
-    // вернёт true, если статус удержания кнопки изменился (нажата/отпущена)
-    bool hold() {
-        return _holdF && server.args();
-    }
-    
-    // вернёт true, если кнопка удерживается
-    bool hold(const String& name) {
-        return _hold.length() ? _hold.equals(name) : 0;
-    }
-    
-    // вернёт имя удерживаемой кнопки
-    String holdName() {
-        return _hold.length() ? _hold : String();
-    }
-    
-    // вернёт часть имени hold компонента, находящейся под номером idx после разделителя /
-    String holdNameSub(int idx = 1) {
-        return _hold.length() ? (GPlistIdx(_hold, idx, '/')) : String();
-    }
-    
-    // вернёт true, если кнопка удерживается и имя компонента начинается с указанного
-    bool holdSub(const String& name) {
-        return _hold.length() ? _hold.startsWith(name) : 0;
-    }
-    
-    // вернёт true, если кнопка была нажата
-    bool clickDown(const String& name) {
-        return hold() ? (_holdF == 1 && server.argName(0).equals(name)) : 0;
-    }
-    // вернёт true, если кнопка была нажата и имя компонента начинается с указанного
-    bool clickDownSub(const String& name) {
-        return hold() ? (_holdF == 1 && server.argName(0).startsWith(name)) : 0;
-    }
-    
-    // вернёт true, если кнопка была отпущена
-    bool clickUp(const String& name) {
-        return hold() ? (_holdF == 2 && server.argName(0).equals(name)) : 0;
-    }
-    // вернёт true, если кнопка была отпущена и имя компонента начинается с указанного
-    bool clickUpSub(const String& name) {
-        return hold() ? (_holdF == 2 && server.argName(0).startsWith(name)) : 0;
-    }
-    
-    
-    // ===================== CLICK AUTO =====================
-    // нулевой аргумент (для вызова в условии)
-    bool clickStr(char* t, int len = 0) {
-        return click() ? copyStr(t, len) : 0;
-    }
-    bool clickString(String& t) {
-        return click() ? copyString(t) : 0;
-    }
-    template <typename T>
-    bool clickInt(T& t) {
-        return click() ? copyInt(t) : 0;
-    }
-    template <typename T>
-    bool clickFloat(T& t) {
-        return click() ? copyFloat(t) : 0;
-    }
-    template <typename T>
-    bool clickBool(T& t) {
-        return click() ? copyBool(t) : 0;
-    }
-    bool clickDate(GPdate& t) {
-        return click() ? copyDate(t) : 0;
-    }
-    bool clickTime(GPtime& t) {
-        return click() ? copyTime(t) : 0;
-    }
-    bool clickColor(GPcolor& t) {
-        return click() ? copyColor(t) : 0;
-    }
-    
-    // с указанием имени компонента
-    bool clickStr(const String& n, char* t, int len = 0) {
-        return click() ? copyStr(n, t, len) : 0;
-    }
-    bool clickString(const String& n, String& t) {
-        return click() ? copyString(n, t) : 0;
-    }
-    template <typename T>
-    bool clickInt(const String& n, T& t) {
-        return click() ? copyInt(n, t) : 0;
-    }
-    template <typename T>
-    bool clickFloat(const String& n, T& t) {
-        return click() ? copyFloat(n, t) : 0;
-    }
-    template <typename T>
-    bool clickBool(const String& n, T& t) {
-        return click() ? copyBool(n, t) : 0;
-    }
-    bool clickDate(const String& n, GPdate& t) {
-        return click() ? copyDate(n, t) : 0;
-    }
-    bool clickTime(const String& n, GPtime& t) {
-        return click() ? copyTime(n, t) : 0;
-    }
-    bool clickColor(const String& n, GPcolor& t) {
-        return click() ? copyColor(n, t) : 0;
-    }
-
-    
-    // ===================== CLICK OBJ ======================
-    bool clickDown(GP_BUTTON& btn) {
-        return clickDown(btn.name);
-    }
-    
-    bool clickUp(GP_BUTTON& btn) {
-        return clickUp(btn.name);
-    }
-    
-    bool clickDown(GP_BUTTON_MINI& btn) {
-        return clickDown(btn.name);
-    }
-    
-    bool clickUp(GP_BUTTON_MINI& btn) {
-        return clickUp(btn.name);
-    }
-    
-    //
-    bool click(GP_BUTTON& btn) {
-        return click(btn.name);
-    }
-    bool click(GP_BUTTON_MINI& btn) {
-        return click(btn.name);
-    }
-    
-    bool click(GP_NUMBER& num) {
-        return click() ? copy(num) : 0;
-    }
-    bool click(GP_NUMBER_F& num) {
-        return click() ? copy(num) : 0;
-    }
-    
-    bool click(GP_TEXT& txt) {
-        return click() ? copy(txt) : 0;
-    }
-    bool click(GP_PASS& pas) {
-        return click() ? copy(pas) : 0;
-    }
-    
-    bool click(GP_AREA& ar) {
-        return click() ? copy(ar) : 0;
-    }
-    
-    bool click(GP_CHECK& ch) {
-        return click() ? copy(ch) : 0;
-    }
-    bool click(GP_SWITCH& sw) {
-        return click() ? copy(sw) : 0;
-    }
-    
-    bool click(GP_DATE& d) {
-        return click() ? copy(d) : 0;
-    }
-    bool click(GP_TIME& t) {
-        return click() ? copy(t) : 0;
-    }
-    bool click(GP_COLOR& c) {
-        return click() ? copy(c) : 0;
-    }
-    
-    bool click(GP_SPINNER& s) {
-        return click() ? copy(s) : 0;
-    }
-    bool click(GP_SLIDER& s) {
-        return click() ? copy(s) : 0;
-    }
-    
-    bool click(GP_SELECT& s) {
-        return click() ? copy(s) : 0;
-    }
-    
-    
-    // ======================= UPDATE =======================
-    // вернёт true, если было обновление
-    bool update() {
-        return (bool)_updPtr;
-    }
-    
-    // вернёт true, если было update с указанного компонента
-    bool update(const String& name) {
-        return update() ? _updPtr->equals(name) : 0;
-    }
-    
-    // вернёт true, если имя обновляемого компонента НАЧИНАЕТСЯ с указанного
-    bool updateSub(const String& name) {
-        return update() ? _updPtr->startsWith(name) : 0;
-    }
-    
-    // вернёт имя обновлённого компонента
-    String updateName() {
-        return update() ? String(*_updPtr) : String();
-    }
-    
-    // вернёт часть имени обновляемого компонента, находящейся под номером idx после разделителя /
-    String updateNameSub(int idx = 1) {
-        return update() ? (GPlistIdx(*_updPtr, idx, '/')) : String();
-    }
-     
-    
-    // ======================= ANSWER =======================
-    // отправить ответ на обновление
-    bool answer(const String& s) {
-        if (_answPtr) *_answPtr += s;
-        return (bool)_answPtr;
-    }
-    bool answer(int v) {
-        if (_answPtr) *_answPtr += v;
-        return (bool)_answPtr;
-    }
-    bool answer(float v, uint8_t dec) {
-        return answer(String(v, (uint16_t)dec));
-    }
-    bool answer(double v, uint8_t dec) {
-        return answer(String(v, (uint16_t)dec));
-    }
-    bool answer(int* v, int am, int dec = 0) {
-        String s;
-        s.reserve(am * 4);
-        for (int i = 0; i < am; i++) {
-            if (dec) s += (float)v[i] / dec;
-            else s += v[i];
-            if (i != am - 1) s += ',';
-        }
-        return answer(s);
-    }
-    
-    bool answer(GPcolor col) {
-        return answer(col.encode());
-    }
-    bool answer(GPdate date) {
-        return answer(date.encode());
-    }
-    bool answer(GPtime time) {
-        return answer(time.encode());
-    }
-    bool answer(GPcanvas& cv) {
-        return answer(cv._read());
-    }
-    
-    // ==================== UPDATE AUTO =====================
-    // автоматическое обновление. Отправит значение из указанной переменной
-    // Вернёт true в момент обновления
-    bool updateString(const String& n, String& f) {
-        return update(n) ? (answer(f), 1) : 0;
-    }
-    template <typename T>
-    bool updateInt(const String& n, T f) {
-        return update(n) ? (answer((int)f), 1) : 0;
-    }
-    template <typename T>
-    bool updateFloat(const String& n, T f, int dec = 2) {
-        return update(n) ? (answer(f, dec), 1) : 0;
-    }
-    bool updateBool(const String& n, bool f) {
-        return update(n) ? (answer(f), 1) : 0;
-    }
-    bool updateDate(const String& n, GPdate f) {
-        return update(n) ? (answer(f), 1) : 0;
-    }
-    bool updateTime(const String& n, GPtime f) {
-        return update(n) ? (answer(f), 1) : 0;
-    }
-    bool updateColor(const String& n, GPcolor f) {
-        return update(n) ? (answer(f), 1) : 0;
-    }
-    
-    bool updateLog(GPlog& log) {
-        return update(log.name) ? (answer(log.read()), 1) : 0;
-    }
-    
-    
-    // ================== UPDATE AUTO OBJ ===================
-    bool update(GP_TITLE& title) {
-        return (update(title.name) ? answer(title.text) : 0);
-    }
-    bool update(GP_LABEL& label) {
-        return (update(label.name) ? answer(label.text) : 0);
-    }
-    bool update(GP_LABEL_BLOCK& label) {
-        return (update(label.name) ? answer(label.text) : 0);
-    }
-    
-    bool update(GP_LED& led) {
-        return (update(led.name) ? answer(led.state) : 0);
-    }
-    bool update(GP_LED_RED& led) {
-        return (update(led.name) ? answer(led.state) : 0);
-    }
-    bool update(GP_LED_GREEN& led) {
-        return (update(led.name) ? answer(led.state) : 0);
-    }
-    
-    bool update(GP_NUMBER& num) {
-        return (update(num.name) ? answer(num.value) : 0);
-    }
-    bool update(GP_NUMBER_F& num) {
-        return (update(num.name) ? answer(num.value, num.decimals) : 0);
-    }
-    
-    bool update(GP_TEXT& txt) {
-        return (update(txt.name) ? answer(txt.text) : 0);
-    }
-    bool update(GP_PASS& pas) {
-        return (update(pas.name) ? answer(pas.text) : 0);
-    }
-    
-    bool update(GP_AREA& ar) {
-        return (update(ar.name) ? answer(ar.text) : 0);
-    }
-    
-    bool update(GP_CHECK& ch) {
-        return (update(ch.name) ? answer(ch.state) : 0);
-    }
-    bool update(GP_SWITCH& sw) {
-        return (update(sw.name) ? answer(sw.state) : 0);
-    }
-    
-    bool update(GP_DATE& d) {
-        return (update(d.name) ? answer(d.date) : 0);
-    }
-    bool update(GP_TIME& t) {
-        return (update(t.name) ? answer(t.time) : 0);
-    }
-    bool update(GP_COLOR& c) {
-        return (update(c.name) ? answer(c.color) : 0);
-    }
-    
-    bool update(GP_SPINNER& s) {
-        return (update(s.name) ? answer(s.value, s.decimals) : 0);
-    }
-    bool update(GP_SLIDER& s) {
-        return (update(s.name) ? answer(s.value, s.decimals) : 0);
-    }
-    
     
     // ======================= MISC =======================
     // вернёт true, если открыта главная страница (/)
@@ -958,175 +618,6 @@ public:
     int argLength() {
         return server.arg(0).length();
     }
-    
-    
-    // ======================= ПАРСЕРЫ =======================
-    // ОПАСНЫЕ ФУНКЦИИ (не проверяют есть ли запрос). Конвертируют и возвращают значение
-    
-    // получить String строку с компонента
-    String getString(const String& n) {
-        return String(server.arg(n));
-    }
-    String getString() {
-        return String(server.arg(0));
-    }
-
-    // получить число с компонента
-    int getInt(const String& n) {
-        return getIntUniv(server.arg(n));
-    }
-    int getInt() {
-        return getIntUniv(server.arg(0));
-    }
-    
-    // получить float с компонента
-    float getFloat(const String& n) {
-        return server.arg(n).toFloat();
-    }
-    float getFloat() {
-        return server.arg(0).toFloat();
-    }
-
-    // получить состояние чекбокса
-    bool getBool(const String& n) {
-        return (server.arg(n)[0] == '1' || server.arg(n)[0] == 'o');
-    }
-    bool getBool() {
-        return (server.arg(0)[0] == '1' || server.arg(0)[0] == 'o');
-    }
-    
-    // получить дату с компонента
-    GPdate getDate(const String& n) {
-        return GPdate(server.arg(n));
-    }
-    GPdate getDate() {
-        return GPdate(server.arg(0));
-    }
-
-    // получить время с компонента
-    GPtime getTime(const String& n) {
-        return GPtime(server.arg(n));
-    }
-    GPtime getTime() {
-        return GPtime(server.arg(0));
-    }
-
-    // получить цвет с компонента
-    GPcolor getColor(const String& n) {
-        return GPcolor(server.arg(n));
-    }
-    GPcolor getColor() {
-        return GPcolor(server.arg(0));
-    }
-
-    
-    // ===================== COPY-ПАРСЕРЫ =====================
-    // ОПАСНЫЕ парсеры (не проверяют запрос). Использовать только в условии!
-    bool copyStr(char* t, int len = 0) {
-        return (server.args() && (!len || argLength() < len)) ? (strcpy(t, server.arg(0).c_str()), 1) : 0;
-    }
-    bool copyString(String& t) {
-        return server.args() ? (t = server.arg(0), 1) : 0;
-    }
-    template <typename T>
-    bool copyInt(T& t) {
-        return server.args() ? (t = getInt(), 1) : 0;
-    }
-    template <typename T>
-    bool copyFloat(T& t) {
-        return server.args() ? (t = getFloat(), 1) : 0;
-    }
-    template <typename T>
-    bool copyBool(T& t) {
-        return server.args() ? (t = getBool(), 1) : 0;
-    }
-    bool copyDate(GPdate& t) {
-        return server.args() ? (t = getDate(), 1) : 0;
-    }
-    bool copyTime(GPtime& t) {
-        return server.args() ? (t = getTime(), 1) : 0;
-    }
-    bool copyColor(GPcolor& t) {
-        return server.args() ? (t = getColor(), 1) : 0;
-    }
-    
-    // БЕЗОПАСНЫЕ парсеры (проверяют запрос). Копируют данные из запроса в переменную
-    bool copyStr(const String& n, char* t, int len = 0) {
-        return (server.hasArg(n) && (!len || argLength(n) < len)) ? (strcpy(t, server.arg(n).c_str()), 1) : 0;
-    }
-    bool copyString(const String& n, String& t) {
-        return server.hasArg(n) ? (t = server.arg(n), 1) : 0;
-    }
-    template <typename T>
-    bool copyInt(const String& n, T& t) {
-        return server.hasArg(n) ? (t = getInt(n), 1) : 0;
-    }
-    template <typename T>
-    bool copyFloat(const String& n, T& t) {
-        return server.hasArg(n) ? (t = getFloat(n), 1) : 0;
-    }
-    template <typename T>
-    bool copyBool(const String& n, T& t) {
-        return server.hasArg(n) ? (t = getBool(n), 1) : 0;
-    }
-    bool copyDate(const String& n, GPdate& t) {
-        return server.hasArg(n) ? (t = getDate(n), 1) : 0;
-    }
-    bool copyTime(const String& n, GPtime& t) {
-        return server.hasArg(n) ? (t = getTime(n), 1) : 0;
-    }
-    bool copyColor(const String& n, GPcolor& t) {
-        return server.hasArg(n) ? (t = getColor(n), 1) : 0;
-    }
-    
-    
-    // ===================== COPY OBJ =====================
-    bool copy(GP_NUMBER& num) {
-        return copyInt(num.name, num.value);
-    }
-    bool copy(GP_NUMBER_F& num) {
-        return copyFloat(num.name, num.value);
-    }
-    
-    bool copy(GP_TEXT& txt) {
-        return copyString(txt.name, txt.text);
-    }
-    bool copy(GP_PASS& pas) {
-        return copyString(pas.name, pas.text);
-    }
-    
-    bool copy(GP_AREA& ar) {
-        return copyString(ar.name, ar.text);
-    }
-    
-    bool copy(GP_CHECK& ch) {
-        return copyBool(ch.name, ch.state);
-    }
-    bool copy(GP_SWITCH& sw) {
-        return copyBool(sw.name, sw.state);
-    }
-    
-    bool copy(GP_DATE& d) {
-        return copyDate(d.name, d.date);
-    }
-    bool copy(GP_TIME& t) {
-        return copyTime(t.name, t.time);
-    }
-    bool copy(GP_COLOR& c) {
-        return copyColor(c.name, c.color);
-    }
-    
-    bool copy(GP_SPINNER& s) {
-        return copyFloat(s.name, s.value);
-    }
-    bool copy(GP_SLIDER& s) {
-        return copyFloat(s.name, s.value);
-    }
-    
-    bool copy(GP_SELECT& s) {
-        return copyInt(s.name, s.selected);
-    }
-    
     
     // ======================= ПРОЧЕЕ =======================    
     // вызвать конструктор и показать страницу
@@ -1221,14 +712,24 @@ public:
     bool getCheck(const String& n) { return getBool(n); }
     bool getCheck() { return getBool(); }
     
+    
+    // ArgParser virtual
+    int args() {
+        return server.args();
+    }
+    const String arg(const String& n) {
+        return server.arg(n);
+    }
+    bool hasArg(const String& n) {
+        return server.hasArg(n);
+    }
+    bool clickF() {
+        return _clickF;
+    }
+    using ArgParser::click;
+    
     // ======================= PRIVATE =======================
 private:
-    int getIntUniv(const String& s) {
-        if (s[0] == '#') {
-            GPcolor col(s);
-            return col.getHEX();
-        } else return s.toInt();
-    }
     
     void checkList() {
         if (!list.idx) return;
@@ -1252,11 +753,8 @@ private:
     fs::FS *_fs = nullptr;
     
     String _uri;
-    String _hold;
     String *_namePtr = nullptr;
     String *_filePtr = nullptr;
-    String *_answPtr = nullptr;
-    String *_updPtr = nullptr;
     
     int _bufsize = 1000;
     bool _cache = 1;
@@ -1268,8 +766,7 @@ private:
     bool _formF = 0, _clickF = 0, _reqF = 0, _delF = 0, _renF = 0;
     bool _fileDF = 0, _uplEF = 0, _uplF = 0, _abortF = 0, _autoD = 1, _autoU = 1, _autoDel = 1, _autoRen = 1;
     bool downOn = 1, uplOn = 1;
-    uint8_t _holdF = 0;
-    
+
     uint32_t _onlTmr = 0;
     uint16_t _onlPrd = 1500;
     
