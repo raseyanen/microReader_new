@@ -18,7 +18,7 @@ void checkFileSystem(void) {           // Проверка и индексаци
     yield();                           // Внутренний поллинг
     if (file) {                        // Если файл существует
       su::Text filename(basenameOf(file.name()));  // Имя файла без ведущего "/"
-      if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && (filename.endsWith(".txt") || filename.endsWith(".itxt") || filename.endsWith(".h") || filename.endsWith(".jpg") || filename.endsWith(".tex"))) {
+      if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && (filename.endsWith(".txt") || filename.endsWith(".itxt") || filename.endsWith(".h") || filename.endsWith(".jpg") || filename.endsWith(".tex") || filename.endsWith(".md"))) {
         fileCount++;                   // Нормальный файл (Имя короткое, тип .txt / .itxt / .h / .jpg / .tex)
         fileNames += "/";              // + /
         fileNames += basenameOf(file.name());  // + Имя файла без ведущего "/"
@@ -140,61 +140,79 @@ void enterToReadBmpFile(void) {
     yield();  // Внутренний поллинг ESP
   }
 }
-uint16_t jpgW = 0, jpgH = 0, kW, kH;
-void enterToReadJpgFile(void) {
-  // Есть ли файл
-  String fn = ("/" + selectedFile);    // Собираем путь до файла
-  File file = LittleFS.open(fn, "r");  // Открываем файл
-  if (!file) {                         // Если сам файл не порядке
-    fileReadError();
-    checkFileSystem();  // Чекаем файловую систему
-    drawMainMenu();     // Рисуем главное меню
-    file.close();       // Закрываем файл
-    return;             // Выходим
-  }
-  file.close();        // Закрываем файл
+// ---------------- JPEG через JPEGDEC ----------------
+File jpgFileH;
+uint16_t kW = 1, kH = 1;      // прореживание после аппаратного масштаба
 
-  oled.clear();        // Чистим олед
-  TJpgDec.getFsJpgSize(&jpgW, &jpgH, fn, LittleFS);  // получаем размер
-  kW = ceil(jpgW / 128.0) > 1 ? ceil(jpgW / 128.0) : 1;
-  kH = ceil(jpgH / 64.0) > 1 ? ceil(jpgH / 64.0) : 1;
-  TJpgDec.drawFsJpg(0, 0, fn, LittleFS); // Выводим картинку
-  oled.update();       // Обновляем олед
-
-  while (1) {              // Бесконечный цикл
-    down.tick();           // Опрос кнопки
-    ok.tick();             // Опрос кнопки
-    if (ok.click()) {      // Если ок нажат
-      uiTimer = millis();  // Сбрасываем таймер дисплея
-      drawMainMenu();      // Рисуем главное меню
-      return;              // Выходим
-    }
-    if (down.click()) {    // Если нажали вниз
-      oled.clear();        // Залить чёрным
-      INVERT_IMG = !INVERT_IMG; // Инвертировать
-      TJpgDec.drawFsJpg(0, 0, fn, LittleFS); // Выводим картинку
-      oled.update();       // Обновить
-    }
-    yield();  // Внутренний поллинг ESP
-  }
+void* jpgOpen(const char* name, int32_t* size) {
+  jpgFileH = LittleFS.open(name, "r");
+  if (!jpgFileH) return nullptr;
+  *size = jpgFileH.size();
+  return &jpgFileH;
 }
-// Внимание! Картинка выводится блоками 16 на 16!
-bool oled_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  //if ((x + w)/kW > 128 || (y + h)/kH > 64) return 0;  // Проверка размера // глючит
-  for (int _y = y; _y < y + h; _y++) {  // Сверху вниз
-    for (int _x = x; _x < x + w; _x++) {  // Слева направо
-      // Пропускаем лишние пиксели
-      if (!(_x % kW) && !(_y % kH)) oled.dot(_x / kW, _y / kH, getBright(bitmap[(_x - x) + (_y - y) * w]) > 127 ? !INVERT_IMG : INVERT_IMG);  // для цветного
-      //if (!(_x % kW) && !(_y % kH)) oled.dot(_x / kW, _y / kH, bitmap[(_x - x) + (_y - y) * w] > 32768 ? !INVERT_IMG : INVERT_IMG); // для ч/б
+void jpgClose(void* h) { if (jpgFileH) jpgFileH.close(); }
+int32_t jpgRead(JPEGFILE* h, uint8_t* buf, int32_t len) { return jpgFileH ? jpgFileH.read(buf, len) : 0; }
+int32_t jpgSeek(JPEGFILE* h, int32_t pos) { return jpgFileH ? jpgFileH.seek(pos) : 0; }
+
+// Колбэк: блок 8-бит серых пикселей -> порог 127 -> точка на олед (с прореживанием kW/kH, как раньше)
+int jpgDraw(JPEGDRAW* d) {
+  const uint8_t* px = (const uint8_t*)d->pPixels;
+  for (int j = 0; j < d->iHeight; j++) {
+    int y = d->y + j;
+    if (y % kH) continue;
+    int oy = y / kH;
+    if (oy >= 64) break;
+    for (int i = 0; i < d->iWidth; i++) {
+      int x = d->x + i;
+      if (x % kW) continue;
+      int ox = x / kW;
+      if (ox >= 128) break;
+      oled.dot(ox, oy, px[j * d->iWidth + i] > 127 ? !INVERT_IMG : INVERT_IMG);
     }
   }
   return 1;
 }
-uint8_t getBright(uint16_t clr) {                                     // максимальная яркость. Просто выбирает наибольшее значение цвета
-  byte r = (clr & 0b1111100000000000) >> 8;
-  byte g = (clr & 0b0000011111100000) >> 3;
-  byte b = (clr & 0b0000000000011111) << 3;
-  return max(max(r, g), b);
+
+bool drawJpg(const String& fn) {
+  oled.clear();
+  if (!jpeg.open(fn.c_str(), jpgOpen, jpgClose, jpgRead, jpgSeek, jpgDraw)) return false;
+  int w = jpeg.getWidth(), h = jpeg.getHeight();
+  int s = 1;                                              // аппаратный масштаб, пока картинка не меньше экрана
+  while (s < 8 && (w / (s * 2)) >= 128 && (h / (s * 2)) >= 64) s *= 2;
+  int opt = (s == 2) ? JPEG_SCALE_HALF : (s == 4) ? JPEG_SCALE_QUARTER : (s == 8) ? JPEG_SCALE_EIGHTH : 0;
+  int sw = w / s, sh = h / s;
+  kW = max(1, (int)ceil(sw / 128.0));
+  kH = max(1, (int)ceil(sh / 64.0));
+  jpeg.setPixelType(EIGHT_BIT_GRAYSCALE);
+  int ok = jpeg.decode(0, 0, opt);
+  jpeg.close();
+  oled.update();
+  return ok;
+}
+
+void enterToReadJpgFile(void) {
+  String fn = ("/" + selectedFile);
+  if (!LittleFS.exists(fn) || !drawJpg(fn)) {             // нет файла или не декодируется
+    fileReadError();
+    checkFileSystem();
+    uiTimer = millis();
+    drawMainMenu();
+    return;
+  }
+  while (1) {
+    down.tick();
+    ok.tick();
+    if (ok.click()) {
+      uiTimer = millis();
+      drawMainMenu();
+      return;
+    }
+    if (down.click()) {                                   // инверсия
+      INVERT_IMG = !INVERT_IMG;
+      drawJpg(fn);
+    }
+    yield();
+  }
 }
 
 uint8_t parseItxt(uint8_t *img, File file) {

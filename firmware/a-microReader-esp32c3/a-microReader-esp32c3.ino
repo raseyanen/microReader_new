@@ -73,7 +73,7 @@
 #include "../../libraries/StringUtils/src/StringUtils.h"  // GyverLibs StringUtils (su::Text / su::TextParser)
 #include <GyverOLED.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
-#include <TJpg_Decoder.h>   // Либа jpg'а
+#include <JPEGDEC.h>        // Либа jpg'а (вместо TJpg_Decoder)
 #include <GyverTimer.h>     // Либа таймера
 #include "driver/gpio.h"
 
@@ -85,6 +85,7 @@ Button up(UP_BTN_PIN);              // Кнопка вверх
 Button ok(OK_BTN_PIN);              // Кнопка ОК
 Button down(DWN_BTN_PIN);           // Кнопка вниз
 GTimer_ms gameTimer(GAME_SPEED); // Таймер игр
+JPEGDEC jpeg;                       // JPEG-декодер
 
 /* =========================================== */
 /* ========= Глобальные переменные =========== */
@@ -142,8 +143,13 @@ void enterToReadBmpFile(void);
 void enterToReadJpgFile(void);
 void enterToReadTexFile(void);                                           // texMath.ino
 uint8_t parseItxt(uint8_t* img, File file);
-bool oled_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap);
-uint8_t getBright(uint16_t clr);
+void enterToReadMdFile(void);                                            // texMd.ino
+void* jpgOpen(const char* name, int32_t* size);                          // files.ino (JPEGDEC)
+void jpgClose(void* h);
+int32_t jpgRead(JPEGFILE* h, uint8_t* buf, int32_t len);
+int32_t jpgSeek(JPEGFILE* h, int32_t pos);
+int jpgDraw(JPEGDRAW* d);
+bool drawJpg(const String& fn);
 void checkBatteryCharge(void);                                           // ui.ino
 void drawBatteryCharge(void);
 void drawMainMenu(void);
@@ -215,10 +221,6 @@ void setup() {
 
   checkFileSystem();
   drawMainMenu();
-
-  // The jpeg image can be scaled by a factor of 1, 2, 4, or 8
-  TJpgDec.setJpgScale(1);
-  TJpgDec.setCallback(oled_output); // Функция отправки на дисплей
   
   WIDTH = (64/SEGMENT - 16/SEGMENT);          // обновляем ширину 
   HEIGHT = (128/SEGMENT);                     // и высоту
@@ -249,6 +251,8 @@ void loop() {
         enterToReadBmpFile();               // Читаем как картинку
       } else if (selectedFile.endsWith(".tex")) {  // Если формула в TeX-синтаксисе
         enterToReadTexFile();                      // Рендерим формулы
+      } else if (selectedFile.endsWith(".md")) {   // Markdown: таблицы и графики
+        enterToReadMdFile();
       } else if (selectedFile.endsWith(".jpg")) {
         enterToReadJpgFile();
       }
