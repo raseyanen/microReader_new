@@ -53,6 +53,7 @@
 #define _EB_DEB           25            // Дебаунс кнопок (мс)
 #define GAME_SPEED        350           // Скорость  (меньше - быстрее)
 #define CALCUL_TYPE       int64_t       // Тип переменной зачений в калькуляторе
+#define ENABLE_BITMAPS    0             // 1 - поддержка картинок .itxt/.h (по умолчанию выключено)
 
 #define T_SEGMENT 4            // Сегмент тетриса
 #define MAX_WIDTH 64
@@ -73,7 +74,6 @@
 #include "../../libraries/StringUtils/src/StringUtils.h"  // GyverLibs StringUtils (su::Text / su::TextParser)
 #include <GyverOLED.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
-#include <JPEGDEC.h>        // Либа jpg'а (вместо TJpg_Decoder)
 #include <GyverTimer.h>     // Либа таймера
 #include "driver/gpio.h"
 
@@ -85,7 +85,6 @@ Button up(UP_BTN_PIN);              // Кнопка вверх
 Button ok(OK_BTN_PIN);              // Кнопка ОК
 Button down(DWN_BTN_PIN);           // Кнопка вниз
 GTimer_ms gameTimer(GAME_SPEED); // Таймер игр
-JPEGDEC jpeg;                       // JPEG-декодер
 
 /* =========================================== */
 /* ========= Глобальные переменные =========== */
@@ -120,6 +119,15 @@ bool loadingFlag = 0;      // Флаг игр (остался от прошив�
 #define X0 16  // сдвиг по ширине для тетриса
 uint8_t WIDTH = (64/SEGMENT - 16/SEGMENT);          // -1 (для текста) // ширина для того же тетриса
 uint8_t HEIGHT = (128/SEGMENT);                     // и высота
+
+bool locked = false;                 // экран PIN активен
+char pinCode[5] = "";                // пусто = PIN выключен
+String edName, edText;               // веб-редактор
+void lockTick(void);                 // lock.ino
+void pinLoad(void);
+bool pinSet(const String& s);
+void edLoad(String name);            // editor.ino
+bool edSave(String name, const String& text);
 /* =========================================== */
 
 /* ========= Измерение напряжения батареи (ESP32-C3) ========== */
@@ -139,17 +147,12 @@ uint16_t readBatteryMv(void) {
 void checkFileSystem(void);                                              // files.ino
 void drawPage(File file);
 void enterToReadTxtFile(void);
+#if ENABLE_BITMAPS
 void enterToReadBmpFile(void);
-void enterToReadJpgFile(void);
-void enterToReadTexFile(void);                                           // texMath.ino
 uint8_t parseItxt(uint8_t* img, File file);
+#endif
+void enterToReadTexFile(void);                                           // texMath.ino
 void enterToReadMdFile(void);                                            // texMd.ino
-void* jpgOpen(const char* name, int32_t* size);                          // files.ino (JPEGDEC)
-void jpgClose(void* h);
-int32_t jpgRead(JPEGFILE* h, uint8_t* buf, int32_t len);
-int32_t jpgSeek(JPEGFILE* h, int32_t pos);
-int jpgDraw(JPEGDRAW* d);
-bool drawJpg(const String& fn);
 void checkBatteryCharge(void);                                           // ui.ino
 void drawBatteryCharge(void);
 void drawMainMenu(void);
@@ -220,7 +223,9 @@ void setup() {
   oled.autoPrintln(true);    // Включаем автоперенос строки
 
   checkFileSystem();
-  drawMainMenu();
+  pinLoad();
+  locked = (pinCode[0] != 0);
+  if (!locked) drawMainMenu();
   
   WIDTH = (64/SEGMENT - 16/SEGMENT);          // обновляем ширину 
   HEIGHT = (128/SEGMENT);                     // и высоту
@@ -231,6 +236,8 @@ void loop() {
   ok.tick();
   down.tick();
   data.tick();  // тикаем память
+  
+  if (locked) { lockTick(); return; }     // экран PIN; игры - удержанием ВВЕРХ
 
   if (up.click()) {                                    // Если нажата или удержана кнопка вверх
     uiTimer = millis();                                // Сбрасываем таймер дисплея
@@ -242,20 +249,15 @@ void loop() {
     drawMainMenu();                                    // Обновляем главное меню
   }
 
-  if (ok.click()) {                         // Если нажата ОК
-    uiTimer = millis();                     // Сбрасываем таймер дисплея
+  if (ok.click()) {
+    uiTimer = millis();
     if (fileCount) {
-      if (selectedFile.endsWith(".txt")) {  // Если файл - текстовый
-        enterToReadTxtFile();               // Читаем как текст
-      } else if (selectedFile.endsWith(".itxt") || selectedFile.endsWith(".h")) {  // Если битмап
-        enterToReadBmpFile();               // Читаем как картинку
-      } else if (selectedFile.endsWith(".tex")) {  // Если формула в TeX-синтаксисе
-        enterToReadTexFile();                      // Рендерим формулы
-      } else if (selectedFile.endsWith(".md")) {   // Markdown: таблицы и графики
-        enterToReadMdFile();
-      } else if (selectedFile.endsWith(".jpg")) {
-        enterToReadJpgFile();
-      }
+      if (selectedFile.endsWith(".txt")) enterToReadTxtFile();
+      else if (selectedFile.endsWith(".md")) enterToReadMdFile();
+      else if (selectedFile.endsWith(".tex")) enterToReadTexFile();
+#if ENABLE_BITMAPS
+      else if (selectedFile.endsWith(".itxt") || selectedFile.endsWith(".h")) enterToReadBmpFile();
+#endif
     }
   }
 

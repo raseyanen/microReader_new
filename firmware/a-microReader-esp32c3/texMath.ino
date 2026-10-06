@@ -62,6 +62,9 @@ static int16_t texBuildLayout(uint8_t lvl);
 static uint8_t texWrap(TexNode* head, int16_t maxW, uint8_t lvl, TexNode** out, uint8_t maxOut);
 static void texPrepare(File file);
 static void texDrawPage();
+static void texLayoutFromLines(const char* title);
+static void texDrawBody(const char* title);
+static void texDrawStatus(int16_t page, int16_t total);
 // ------------------ данные страницы ------------------
 static char texLines[TEX_MAX_LINES][TEX_LINE_LEN];
 static uint8_t texLineCount = 0;
@@ -823,18 +826,14 @@ static int16_t texBuildLayout(uint8_t lvl) {
   return tot;
 }
 
-// Загрузка страницы + выбор размера: обычный с переносами -> мелкий с переносами -> обычный со скроллом
-static void texPrepare(File file) {
-  texLoadPages(file, texPage);
-  uint8_t total = texTotalPages();
-  if (texPage >= total) { texPage = total - 1; texLoadPages(file, texPage); }
-  texTopY = *texNames[texPage] ? 12 : 0;
+// Выбор размера и раскладка страницы из texLines: обычный с переносами -> мелкий -> обычный со скроллом
+static void texLayoutFromLines(const char* title) {
+  texTopY = (title && *title) ? 12 : 0;
   int16_t availH = 64 - texTopY;
-
   int16_t h = texBuildLayout(0);
   if (!texOom && (h > availH || texContentW > 128)) {
     int16_t h1 = texBuildLayout(1);
-    if (texOom || h1 > availH || texContentW > 128) h = texBuildLayout(0);   // и так не влезло - скролл
+    if (texOom || h1 > availH || texContentW > 128) h = texBuildLayout(0);
     else h = h1;
   }
   texContentH = h;
@@ -844,9 +843,16 @@ static void texPrepare(File file) {
   if ((texMode == TM_VERT && !texMaxY) || (texMode == TM_HORZ && !texMaxX)) texMode = TM_PAGE;
 }
 
+static void texPrepare(File file) {
+  texLoadPages(file, texPage);
+  uint8_t total = texTotalPages();
+  if (texPage >= total) { texPage = total - 1; texLoadPages(file, texPage); }
+  texLayoutFromLines(texNames[texPage]);
+}
+
 static void texClr(int16_t x, int16_t y) { if (x >= 0 && x <= 127 && y >= 0 && y <= 63) oled.dot(x, y, 0); }
 
-// стрелка-индикатор 3x5 в центре (x,y). dir: 0 вверх, 1 вниз, 2 влево, 3 вправо
+// стрелка-индикатор в центре (x,y). dir: 0 вверх, 1 вниз, 2 влево, 3 вправо
 static void texArrow(uint8_t dir, int16_t x, int16_t y) {
   for (int8_t i = -3; i <= 3; i++) for (int8_t j = -3; j <= 3; j++) texClr(x + i, y + j);
   for (int8_t r = 0; r < 3; r++)
@@ -860,30 +866,26 @@ static void texArrow(uint8_t dir, int16_t x, int16_t y) {
     }
 }
 
-static void texDrawPage() {
-  oled.autoPrintln(false);
-  oled.clear();
+// содержимое страницы формул (заголовок + формулы + метки "есть ещё")
+static void texDrawBody(const char* title) {
   texClipTop = 0;
-  uint8_t total = texTotalPages();
-  const char* name = texNames[texPage];
-  if (*name) {                                        // название сверху по центру
-    uint8_t nl = texU8Len(name);
+  if (title && *title) {
+    uint8_t nl = texU8Len(title);
     int16_t nw = nl * 6 - 1;
     int16_t nx = max<int16_t>(0, (128 - nw) / 2);
-    const char* sp = name;
+    const char* sp = title;
     for (uint8_t i = 0; *sp; i++) texDrawCp(texU8Next(sp), nx + i * 6, 0);
     texHLine(nx, nx + nw - 1, 9);
   }
   int16_t availH = 64 - texTopY;
-  texClipTop = texTopY;                               // содержимое не залезает на заголовок
-
+  texClipTop = texTopY;
   if (texOom || texSegN == 0) {
     const char* msg = texOom ? "FORMULA TOO LONG" : "(EMPTY)";
     uint8_t ml = strlen(msg);
     for (uint8_t i = 0; i < ml; i++) texChar5(msg[i], (128 - ml * 6) / 2 + i * 6, 30);
   } else {
     int16_t extra = 0, y0;
-    if (texMaxY == 0) {                               // влезает по высоте - центрируем
+    if (texMaxY == 0) {
       extra = (texSegN > 1) ? min<int16_t>(4, (availH - texContentH) / (texSegN + 1)) : 0;
       y0 = texTopY + (availH - texContentH - extra * (texSegN - 1)) / 2;
     } else y0 = texTopY - texScrollY;
@@ -892,28 +894,34 @@ static void texDrawPage() {
       TexBox& bx = texSegBox[i];
       int16_t ind = texSegCont[i] ? TEX_INDENT : 0;
       int16_t x;
-      if (texMaxX) x = 1 - texScrollX + ind;                    // шире экрана - слева + прокрутка
-      else if (texSegWrap[i]) x = 1 + ind;                      // перенесённые строки - по левому краю
-      else x = max<int16_t>(0, (128 - bx.w) / 2);               // остальные по центру
+      if (texMaxX) x = 1 - texScrollX + ind;
+      else if (texSegWrap[i]) x = 1 + ind;
+      else x = max<int16_t>(0, (128 - bx.w) / 2);
       texLay(texSeg[i], x, y + bx.up, texLvl, true);
       y += bx.up + bx.dn + 1 + 2 + extra;
     }
   }
-
   texClipTop = 0;
-  // метки "есть скрытое содержимое"
   if (texScrollX < texMaxX) texArrow(3, 126, texTopY + availH / 2);
   if (texScrollX > 0)       texArrow(2, 1,   texTopY + availH / 2);
   if (texScrollY < texMaxY) texArrow(1, 64,  62);
   if (texScrollY > 0)       texArrow(0, 64,  texTopY + 2);
+}
 
-  // номер страницы (и режим V/H) в правом нижнем углу
+// номер страницы (и режим V/H) в правом нижнем углу
+static void texDrawStatus(int16_t page, int16_t total) {
   char st[16];
-  snprintf(st, sizeof(st), "%s%d/%d", texMode == TM_VERT ? "V " : (texMode == TM_HORZ ? "H " : ""), texPage + 1, total);
+  snprintf(st, sizeof(st), "%s%d/%d", texMode == TM_VERT ? "V " : (texMode == TM_HORZ ? "H " : ""), page, total);
   int16_t sw = strlen(st) * 4;
   for (int16_t x = 128 - sw - 1; x < 128; x++) for (int16_t yy = 58; yy < 64; yy++) texClr(x, yy);
   for (uint8_t i = 0; st[i]; i++) texChar3(st[i], 128 - sw + i * 4, 59);
+}
 
+static void texDrawPage() {
+  oled.autoPrintln(false);
+  oled.clear();
+  texDrawBody(texNames[texPage]);
+  texDrawStatus(texPage + 1, texTotalPages());
   oled.update();
   oled.autoPrintln(true);
 }
@@ -927,33 +935,28 @@ void enterToReadTexFile(void) {
     drawMainMenu();
     return;
   }
-
   texPage = 0;
   texMode = TM_PAGE;
-  texLoadPages(file, 0);                  // только посчитать страницы
+  texLoadPages(file, 0);
   uint8_t pages = texTotalPages();
   texPrepare(file);
   texDrawPage();
 
   while (1) {
     up.tick(); ok.tick(); down.tick();
-    bool overflow = texMaxX || texMaxY;
-
-    // выход: удержание ОК, а если всё влезло - как раньше, по клику
-    if (ok.hold() || (ok.click() && !overflow)) {
+    if (ok.hold()) {                                   // выход - удержание ОК
       uiTimer = millis();
       drawMainMenu();
       file.close();
       return;
     }
-    if (ok.click()) {                     // переключение режима: страницы -> верт. -> гориз.
+    if (ok.click() && (texMaxX || texMaxY)) {          // страницы -> верт. -> гориз.
       uiTimer = millis();
       if (texMode == TM_PAGE) texMode = texMaxY ? TM_VERT : TM_HORZ;
       else if (texMode == TM_VERT) texMode = texMaxX ? TM_HORZ : TM_PAGE;
       else texMode = TM_PAGE;
       texDrawPage();
     }
-
     int8_t dir = 0;
     if (down.click() || down.step()) dir = 1;
     if (up.click() || up.step()) dir = -1;
@@ -963,11 +966,9 @@ void enterToReadTexFile(void) {
         int8_t np = texPage + dir;
         if (np >= 0 && np < pages) { texPage = np; texPrepare(file); texDrawPage(); }
       } else if (texMode == TM_VERT) {
-        texScrollY = constrain(texScrollY + dir * 8, 0, texMaxY);
-        texDrawPage();
+        texScrollY = constrain(texScrollY + dir * 8, 0, texMaxY); texDrawPage();
       } else {
-        texScrollX = constrain(texScrollX + dir * 8, 0, texMaxX);
-        texDrawPage();
+        texScrollX = constrain(texScrollX + dir * 8, 0, texMaxX); texDrawPage();
       }
     }
     yield();

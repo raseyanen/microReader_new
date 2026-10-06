@@ -23,6 +23,7 @@ void build() {                     // Билд страницы
       "Другое",             // Имя + тип DIV
       M_BOX(GP_CENTER, GP.LABEL("Режим левши"); GP.SWITCH("leftEn", sets.leftmode);); GP.BREAK();
       M_BOX(GP_CENTER, GP.LABEL("Размер сегмента игр"); GP.NUMBER("tetrSeg", "", sets.tetrisSegment);); GP.BREAK(); // размер сегмента
+      M_BOX(GP_CENTER, GP.LABEL("PIN (4 цифры, пусто = выкл.)"); GP.TEXT("pin", "", pinCode, "90px", 4);); GP.BREAK();
       M_BOX(GP_CENTER, GP.LABEL("Яркость"); GP.SLIDER("con", sets.dispContrast, 10, 100););););
   GP.FORM_END();                 // <- Конец формы (костыль)
   M_BLOCK_TAB(                   // Блок с OTA-апдейтом
@@ -33,6 +34,20 @@ void build() {                     // Билд страницы
     "Файловая система",          // Имя + тип DIV
     GP.FILE_UPLOAD("file_upl");  // Кнопка для загрузки файла
     GP.FILE_MANAGER(&LittleFS);  // Файловый менеджер
+  );
+    M_BLOCK_TAB(                   // Редактор файлов
+    "Редактор",
+    GP.FORM_BEGIN("/edit");
+    GP.TEXT("edName", "Имя файла (.md .txt .tex)", edName, "", MAX_FILENAME_LEN + 3);
+    GP.BREAK();
+    GP.AREA("edText", 14, edText);
+    GP.BREAK();
+    GP.SUBMIT("Сохранить");
+    GP.FORM_END();
+    GP.FORM_BEGIN("/edopen");
+    GP.TEXT("edOpen", "Открыть файл", "", "", MAX_FILENAME_LEN + 3);
+    GP.SUBMIT("Открыть");
+    GP.FORM_END();
   );
   GP.BUILD_END();                  // Конец билда страницы
 }
@@ -45,6 +60,9 @@ void action(GyverPortal& p) {      // Подсос значений со стр�
     p.copyStr("staPass", sets.staPass);
     p.copyBool("staEn", sets.staModeEn);
     p.copyBool("leftEn", sets.leftmode);
+    String pinS;
+    p.copyString("pin", pinS);
+    pinSet(pinS);               // неверный формат игнорируется, PIN вступает в силу при следующем запуске
     p.copyInt("con", sets.dispContrast);
     byte con = map(sets.dispContrast, 10, 100, 1, 255);
     oled.setContrast(con);            // Тут же задаем яркость оледа
@@ -70,5 +88,16 @@ void action(GyverPortal& p) {      // Подсос значений со стр�
     //EEPROM.put(1, sets);        // Сохраняем все настройки в EEPROM
     //EEPROM.commit();            // Записываем
     data.update();                // Записать. Дальше оно само
+  }
+    if (p.form("/edit")) {                 // сохранить из редактора
+    String n, t;
+    p.copyString("edName", n);
+    p.copyString("edText", t);
+    edSave(n, t);
+  }
+  if (p.form("/edopen")) {               // открыть файл в редакторе
+    String n;
+    p.copyString("edOpen", n);
+    edLoad(n);
   }
 }
