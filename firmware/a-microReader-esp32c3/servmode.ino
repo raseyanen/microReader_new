@@ -20,7 +20,7 @@ void enterToServiceMode(void) {
     up.tick();
     ok.tick();
     down.tick();
-    data.tick();
+    saver.tick();
 
     if (up.click()) {
       servCursor = constrain(servCursor - 1, 0, SERV_MENU_LINES - 1);
@@ -33,9 +33,9 @@ void enterToServiceMode(void) {
     if (ok.click()) {
       switch (servCursor) {
         case 0:           // Сброс настроек
-          //EEPROM.put(1, sets);
+          //EEPROM.put(1, cfg);
           //EEPROM.commit();
-          data.write();
+          saver.write();
           drawResetNotify();
           drawServiceMenu();
           break;

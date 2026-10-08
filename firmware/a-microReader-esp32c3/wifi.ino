@@ -1,122 +1,85 @@
-void enterToWifiMenu(void) {     // Переход в режим WIFI
-  oled.clear();                  // Очистка
-  oled.home();                   // Возврат на 0,0
-  oled.line(0, 10, 127, 10);     // Линия
-  oled.print(F("WI-FI МЕНЮ"));   // Выводим режим
-  checkBatteryCharge();          // Проверка напряжение аккума
-  drawBatteryCharge();           // Рисуем индикатор
-  oled.update();                 // Выводим картинку
+// общий цикл меню Wi-Fi: redraw - функция перерисовки меню, ap - режим точки доступа
+static void wifiServe(void (*redraw)(void), bool ap) {
+  sett.setVersion("FW.V1.2-C3");
+  sett.begin(ap);                           // captive portal нужен только в режиме точки доступа
+  sett.onBuild(build);
+  while (1) {
+    ok.tick();
+    up.tick();
+    down.tick();
+    saver.tick();
+    if (sett.focused()) uiTimer = millis();     // пока страница открыта в браузере - таймаут не срабатывает
 
-  if (sets.staModeEn) {         // Если нужно подключиться к роутеру
-    oled.clear();               // Очистка
-    oled.home();                // Возврат на 0,0
-    oled.line(0, 10, 127, 10);  // Линия
-    oled.print(F("WI-FI МЕНЮ"));   // Выводим режим
+    if (up.click() || up.hold()) {              // яркость +
+      uiTimer = millis();
+      cfg.dispContrast = constrain(cfg.dispContrast + 10, 10, 100);
+      applyContrast();
+    }
+    if (down.click() || down.hold()) {          // яркость -
+      uiTimer = millis();
+      cfg.dispContrast = constrain(cfg.dispContrast - 10, 10, 100);
+      applyContrast();
+    }
+
+    if (ok.click() || (millis() - uiTimer) >= WIFI_TIMEOUT_S * 1000UL) {   // кнопка или таймаут
+      uiTimer = millis();
+      validateNetSettings();
+      checkFileSystem();                        // подхватить файлы, загруженные/удалённые через веб
+      drawMainMenu();
+      saver.write();                            // сохранить настройки сразу
+      if (ap) WiFi.softAPdisconnect();
+      WiFi.mode(WIFI_OFF);
+      return;
+    }
+
+    if (millis() - batTimer >= 5000) {          // перерисовка меню ради индикации заряда
+      batTimer = millis();
+      redraw();
+    }
+    sett.tick();
+    yield();
+  }
+}
+
+void enterToWifiMenu(void) {
+  validateNetSettings();
+  oled.clear();
+  oled.home();
+  oled.line(0, 10, 127, 10);
+  oled.print(F("WI-FI МЕНЮ"));
+  checkBatteryCharge();
+  drawBatteryCharge();
+  oled.update();
+
+  if (cfg.staModeEn) {                          // подключиться к роутеру
+    oled.clear();
+    oled.home();
+    oled.line(0, 10, 127, 10);
+    oled.print(F("WI-FI МЕНЮ"));
     oled.setCursor(0, 2);
-    oled.print(F("Подключение"));  // Выводим надпись
-    checkBatteryCharge();          // Проверка напряжение аккума
-    drawBatteryCharge();           // Рисуем индикатор
-    oled.update();                 // Выводим картинку
+    oled.print(F("Подключение"));
+    checkBatteryCharge();
+    drawBatteryCharge();
+    oled.update();
 
-    WiFi.mode(WIFI_STA);                     // Включаем wifi
-    WiFi.begin(sets.staSsid, sets.staPass);  // Подключаемся к сети
-    oled.setCursor(66, 2);                   // Ставим курсор
-    for (uint8_t i = 0; i < 10; i++) {       // Цикл на 10 секунд
-      if (WiFi.status() != WL_CONNECTED) {   // Если к сети не подключились
-        oled.print(".");                     // Рисуем точку
-        oled.update();                       // Выводим картинку
-        delay(1000);                         // Ждем секунду
-      } else {                               // Как только подключились
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(cfg.staSsid, cfg.staPass);
+    oled.setCursor(66, 2);
+    for (uint8_t i = 0; i < 10; i++) {          // 10 секунд на подключение
+      if (WiFi.status() != WL_CONNECTED) {
+        oled.print(".");
+        oled.update();
+        delay(1000);
+      } else {
         drawStaMenu();
-        ui.attachBuild(build);               // Подключаем билд веб морды
-        ui.attach(action);                   // Подключаем обработчик действий
-        ui.start();                          // Стартуем!
-        ui.enableOTA();                      // Включаем ОТА для прошивки по воздуху
-        while (1) {                          // Бесконечный цикл
-          ok.tick();                         // Опрос кнопки ОК
-          up.tick();                         // Опрос кнопки UP
-          down.tick();                       // Опрос кнопки DOWN
-          data.tick();
-
-          if (up.click() || up.hold()) {  // Поднять яркость
-            uiTimer = millis();           // Сброс таймера дисплея
-            sets.dispContrast = constrain(sets.dispContrast + 10, 10, 100);
-            byte con = map(sets.dispContrast, 10, 100, 1, 255);
-            oled.setContrast(con);        // Тут же задаем яркость оледа
-          }
-
-          if (down.click() || down.hold()) {  // Понизить яркость
-            uiTimer = millis();               // Сброс таймера дисплея
-            sets.dispContrast = constrain(sets.dispContrast - 10, 10, 100);
-            byte con = map(sets.dispContrast, 10, 100, 1, 255);
-            oled.setContrast(con);            // Тут же задаем яркость оледа
-          }
-
-          if (ok.click() || ((millis() - uiTimer) >= WIFI_TIMEOUT_S * 1000)) {  // Если нажата кнопка или таймаут WiFi
-            uiTimer = millis();                                                 // Сброс таймера дисплея
-            checkFileSystem();                                                  // Чекаем файловую систему
-            drawMainMenu();                                                     // Рисуем главное меню
-            //EEPROM.put(1, sets);                                              // Сохраняем все настройки в EEPROM
-            //EEPROM.commit();                                                  // Записываем
-            data.update();                                                      // Сохраняем и записываем
-            WiFi.mode(WIFI_OFF);                                                // Вырубаем wifi
-            return;                                                             // Валим из функции
-          }
-
-          if (millis() - batTimer >= 5000) {  // Таймер дисплея
-            batTimer = millis();              // Сбрасываем таймер
-            drawStaMenu();                    // Рисуем меню (только ради индикации заряда)
-          }
-          ui.tick();  // Тикер портала
-          yield();    // Внутренний поллинг ESP
-        }
+        wifiServe(drawStaMenu, false);
+        return;
       }
     }
   }
 
-  WiFi.mode(WIFI_AP);                     // Если STA режим пропущен врубаем AP
-  WiFi.softAP(sets.apSsid, sets.apPass);  // Создаем сеть
-  drawApMenu(); 
-  ui.attachBuild(build);                  // Подключаем билд веб морды
-  ui.attach(action);                      // Подключаем обработчик действий
-  ui.start();                             // Стартуем!
-  ui.enableOTA();                         // Включаем ОТА для прошивки по воздуху
-  while (1) {                             // Бесконечный цикл
-    ok.tick();                            // Опрос кнопки ОК
-    up.tick();                            // Опрос кнопки UP
-    down.tick();                          // Опрос кнопки DOWN
-    data.tick();
-
-    if (up.click() || up.hold()) {        // Поднять яркость
-      uiTimer = millis();                 // Сброс таймера дисплея
-      sets.dispContrast = constrain(sets.dispContrast + 10, 10, 100);
-      uint8_t con = map(sets.dispContrast, 10, 100, 1, 255);
-      oled.setContrast(con);              // Тут же задаем яркость оледа
-    }
-
-    if (down.click() || down.hold()) {    // Понизить яркость
-      uiTimer = millis();                 // Сброс таймера дисплея
-      sets.dispContrast = constrain(sets.dispContrast - 10, 10, 100);
-      uint8_t con = map(sets.dispContrast, 10, 100, 1, 255);
-      oled.setContrast(con);              // Тут же задаем яркость оледа
-    }
-
-    if (ok.click() || ((millis() - uiTimer) / 1000 >= WIFI_TIMEOUT_S)) {  // Если нажата кнопка или таймаут WiFi
-      uiTimer = millis();                                                 // Сброс таймера дисплея
-      checkFileSystem();                                                  // Чекаем файловую систему
-      drawMainMenu();                                                     // Рисуем главное меню
-      //EEPROM.put(1, sets);                                              // Сохраняем все настройки в EEPROM
-      //EEPROM.commit();                                                  // Записываем
-      data.update();                                                      // Сохраняем и записываем
-      WiFi.softAPdisconnect();                                            // Отключаем точку доступа
-      WiFi.mode(WIFI_OFF);                                                // Вырубаем wifi
-      return;                                                             // Валим из функции
-    }
-    if (millis() - batTimer >= 5000) {  // Таймер дисплея
-      batTimer = millis();              // Сбрасываем таймер
-      drawApMenu();                     // Рисуем меню (только ради индикации заряда)
-    }
-    ui.tick();  // Тикер портала
-    yield();    // Внутренний поллинг ESP
-  }
+  WiFi.mode(WIFI_AP);                           // STA не получился или выключен - точка доступа
+  WiFi.softAP(cfg.apSsid, cfg.apPass);
+  drawApMenu();
+  wifiServe(drawApMenu, true);
 }

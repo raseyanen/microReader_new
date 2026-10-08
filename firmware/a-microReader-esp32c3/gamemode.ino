@@ -1,4 +1,4 @@
-#define GAME_MENU_LINES 6
+#define GAME_MENU_LINES 5
 uint8_t gCursor = 0;
 
 // ------------------ глубокий сон ------------------
@@ -22,7 +22,7 @@ void enterToDeepSleep(void) {
   delay(800);
 
   oled.setPower(false);           // гасим дисплей до сна
-  data.tick();                    // дать FileData досписать настройки, если есть
+  saver.write();                  // сохранить настройки до сна (Saver пишет с задержкой)
   delay(50);
 
   // готовим будильники-пины: все три кнопки как входы с подтяжкой
@@ -55,7 +55,7 @@ void enterToGameMode(void) {
     up.tick();
     ok.tick();
     down.tick();
-    data.tick();
+    saver.tick();
 
     if (up.click()) {
       gCursor = constrain(gCursor - 1, 0, GAME_MENU_LINES - 1);
@@ -80,15 +80,11 @@ void enterToGameMode(void) {
           snakeGame();
           break;
 
-        case 3:            // Калькулятор
-          calcul();
-          break;
-
-        case 4:            // Глубокий сон (выключение)
+        case 3:            // Глубокий сон
           enterToDeepSleep();
           break;          // не возвращается
 
-        case 5:            // Выход
+        case 4:            // Назад в меню
           drawMainMenu();
           return;
       }
@@ -107,7 +103,6 @@ void drawGameMenu(void) {
     "  ДИНОЗАВРИК\r\n"                                                    // ВНИМАНИЕ!   Тут какой-то глюк, с одним пробелом не работает
     "  ТЕТРИС\r\n"
     "  ЗМЕЙКА\r\n"
-    "  КАЛЬКУЛЯТОР\r\n"
     "  ГЛУБОКИЙ СОН\r\n"
     "  ВЫХОД\r\n"));
 

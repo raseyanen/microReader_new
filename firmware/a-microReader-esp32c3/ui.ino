@@ -73,7 +73,7 @@ void drawStaMenu(void) {      // Рисуем STA меню
   oled.print(F("РЕЖИМ STA")); // Выводим режим
   oled.setCursor(0, 2);
   oled.print(F("Сеть: "));
-  oled.print(sets.staSsid);   // Выводим имя сети
+  oled.print(cfg.staSsid);   // Выводим имя сети
   oled.setCursor(0, 4);
   oled.print(F("Локал.IP:"));
   oled.print(WiFi.localIP());  // Выводим IP
@@ -89,10 +89,10 @@ void drawApMenu(void) {       // Рисуем AP меню
   oled.print(F("РЕЖИМ AP"));  // Выводим режим
   oled.setCursor(0, 2);
   oled.print(F("Сеть: "));
-  oled.print(sets.apSsid);    // Выводим имя сети
+  oled.print(cfg.apSsid);    // Выводим имя сети
   oled.setCursor(0, 4);
   oled.print(F("Ключ: "));
-  oled.print(sets.apPass);    // Выводим пароль
+  oled.print(cfg.apPass);    // Выводим пароль
   oled.setCursor(0, 6);
   oled.print(F("Локал.IP:"));
   oled.print(F("192.168.4.1"));   // Выводим IP
@@ -114,3 +114,22 @@ void fileReadError(void) {
   oled.update();
   delay(1500);
 }
+
+void applyButtonTimeouts(void) {                 // единые таймауты кнопок
+  ok.setHoldTimeout(1500);
+  up.setHoldTimeout(1500);
+  up.setStepTimeout(100);
+  down.setStepTimeout(100);
+  down.setHoldTimeout(600);                      // стандартные значения EncButton (в динозавре менялись)
+  ok.setStepTimeout(200);
+}
+
+void setHanded(bool left) {                      // ориентация экрана и кнопок
+  oled.flipH(left);
+  oled.flipV(left);
+  up = Button(left ? DWN_BTN_PIN : UP_BTN_PIN);
+  down = Button(left ? UP_BTN_PIN : DWN_BTN_PIN);
+  applyButtonTimeouts();
+}
+
+void applyHandedness(void) { setHanded(cfg.leftmode); }

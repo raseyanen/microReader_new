@@ -16,11 +16,11 @@ boolean butt_flag, gameover;
 
 void snakeGame() {                                                                           // Главное меню игры
   while (true) {                                                                             // Бесконечный цикл
-    data.tick();                                                                             // Тикаем память
+    saver.tick();                                                                             // Тикаем память
     oled.clear();                                                                            // Очистка дисплея
     oled.roundRect(0, 9, 127, 46, OLED_STROKE);                                              // Отрисовка интерфейса
     oled.setCursor(3, 0); oled.print(F("SNAKE GAME"));                                       // Отрисовка интерфейса
-    oled.setCursor(18, 6); oled.print(F("Лучший счет:")); oled.print(sets.snakeBestScore);   // Вывод рекорда
+    oled.setCursor(18, 6); oled.print(F("Лучший счет:")); oled.print(cfg.snakeBestScore);   // Вывод рекорда
     oled.setCursor(0, 7); oled.print(F("<- Вверх"));                                         // Вывод доп. инфы
     oled.setCursor(96, 7); oled.print(F("Ок ->"));                                           // Вывод доп. инфы
     //drawFigureRaw(3, 0, 32, 24);                                                             // Вывод картинок
@@ -37,7 +37,7 @@ void snakeGame() {                                                              
     while (true) {                                                                           // Вложенный бесконечный цикл
       up.tick();
       ok.tick();
-      data.tick();                                                                           // Тикаем память
+      saver.tick();                                                                           // Тикаем память
 
       if (up.click() || millis() - uiTimer >= 10000) {
         drawGameMenu();
@@ -62,19 +62,18 @@ void playSnakeGame() {
     ok.tick();
     up.tick();
     down.tick();
-    data.tick();                              // тикаем память
+    saver.tick();                              // тикаем память
 
     checkBatteryCharge();                                                                                                // Проверка напряжение аккума
     drawBatteryCharge();                                                                                                 // Рисуем индикатор
     oled.line(0, 10, 127, 10);                // Линия
     oled.rect(0, 16, 127, 63, OLED_STROKE);   // Рамка
     oled.setCursor(0, 0); oled.print("HI");                                                                              // Выводим рекорд
-    oled.setCursor(13, 0); oled.print(sets.snakeBestScore); oled.print(":"); oled.print(snakeLength - START_LENGTH);     // Рекорд:текущий счет
+    oled.setCursor(13, 0); oled.print(cfg.snakeBestScore); oled.print(":"); oled.print(snakeLength - START_LENGTH);     // Рекорд:текущий счет
     if (ok.hold()) {
       uiTimer = millis();
-      if (snakeLength - START_LENGTH > sets.snakeBestScore) {
-        sets.snakeBestScore = snakeLength - START_LENGTH;  // записать
-        data.update();                                     // обновить
+      if (snakeLength - START_LENGTH > cfg.snakeBestScore) {
+        cfg.snakeBestScore = snakeLength - START_LENGTH;  // записать
       }
       break;
     }
@@ -91,7 +90,7 @@ void snakeRoutine() {
     newGameSnake();
   }
   buttonsTickSnake();
-  if (gameTimer.isReady()) {
+  if (gameTimer.tick()) {
     // БЛОК ГЕНЕРАЦИИ ЯБЛОКА
     while (!apple_flag) {                         // пока яблоко не создано
       appleY = random(0, WIDTH);                  // взять случайные координаты
@@ -175,9 +174,8 @@ void snakeRoutine() {
     oled.clear();
     oled.update();
     int score = snakeLength - START_LENGTH;
-    if (score > sets.snakeBestScore) {
-      sets.snakeBestScore = score;
-      data.update();
+    if (score > cfg.snakeBestScore) {
+      cfg.snakeBestScore = score;
     }
     delay(1000);
     newGameSnake(); // Тыгдык опять
@@ -253,4 +251,7 @@ void newGameSnake() {
   buttX = headX - snakeLength;   // координата хвоста как голова - длина
   missDelete = false;
   apple_flag = false;
+
+  gameTimer.setTime(150);
+  gameTimer.start();
 }

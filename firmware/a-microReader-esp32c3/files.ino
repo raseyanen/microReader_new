@@ -1,11 +1,15 @@
-#if ENABLE_BITMAPS
-bool INVERT_IMG = 0;
-#endif
-
 // Имя файла без ведущего пути ("/file.txt" -> "file.txt")
 const char* basenameOf(const char* path) {
   const char* slash = strrchr(path, '/');
   return slash ? slash + 1 : path;
+}
+
+// После выхода по удержанию ОК ждём отпускания, иначе главный цикл увидит удержание и откроет Wi-Fi
+void waitOkRelease(void) {
+  uint32_t t = millis();
+  while (!digitalRead(OK_BTN_PIN) && millis() - t < 5000) { delay(5); yield(); }   // нажата = LOW
+  ok.tick();
+  ok.tick();
 }
 
 /* ========================== Работа с файлами =========================== */
@@ -20,14 +24,14 @@ void checkFileSystem(void) {
     if (file) {
       su::Text filename(basenameOf(file.name()));
       bool okExt = filename.endsWith(".txt") || filename.endsWith(".md") || filename.endsWith(".tex");
-#if ENABLE_BITMAPS
+#ifdef ENABLE_BITMAPS
       okExt = okExt || filename.endsWith(".itxt") || filename.endsWith(".h");
 #endif
       if ((filename.lengthUnicode() < MAX_FILENAME_LEN + 5) && okExt) {
         fileCount++;
         fileNames += "/";
         fileNames += basenameOf(file.name());
-      } else if (!filename.endsWith(".dat")) badCount++;   // старые .jpg теперь считаются "битыми" - удалите их через веб
+      } else if (!filename.endsWith(".dat")) badCount++;
     } else badCount++;
     file.close();
   }
@@ -55,6 +59,7 @@ void enterToReadTxtFile(void) {
   while (1) {
     up.tick(); ok.tick(); down.tick();
     if (ok.hold()) {                               // выход - удержание ОК
+      waitOkRelease();
       uiTimer = millis();
       drawMainMenu();
       file.close();
@@ -73,57 +78,3 @@ void enterToReadTxtFile(void) {
     yield();
   }
 }
-
-#if ENABLE_BITMAPS
-uint8_t parseItxt(uint8_t *img, File file) {
-  int imgLen = 0;
-  memset(img, 0, 1024);
-  while (file.read() != '{') {
-    if (!file.available()) return 1;
-    yield();
-  }
-  while (file.available()) {
-    String line = file.readStringUntil('\n');
-    su::TextParser p(line.c_str(), ',');
-    while (p.parse()) {
-      uint8_t val = p.trim().toInt32HEX();
-      if (INVERT_IMG) val = ~val;
-      img[imgLen] = val;
-      if (++imgLen >= 1023) return 0;
-      yield();
-    } yield();
-  }
-  return 1;
-}
-
-void enterToReadBmpFile(void) {
-  String fn = ("/" + selectedFile);
-  File file = LittleFS.open(fn, "r");
-  if (!file) { fileReadError(); checkFileSystem(); drawMainMenu(); return; }
-  uint8_t *img = new uint8_t[1024];
-  if (parseItxt(img, file)) {
-    fileReadError(); delete[] img; uiTimer = millis(); drawMainMenu(); file.close(); return;
-  }
-  oled.clear();
-  oled.drawBmpFromRam(0, 0, img, 128, 64);
-  oled.update();
-  file.close();
-  while (1) {
-    ok.tick(); down.tick();
-    if (ok.hold()) {                               // выход - удержание ОК
-      uiTimer = millis(); drawMainMenu(); delete[] img; return;
-    }
-    if (down.click()) {                            // инверсия
-      File f2 = LittleFS.open(fn, "r");
-      if (!f2) { fileReadError(); checkFileSystem(); delete[] img; uiTimer = millis(); drawMainMenu(); return; }
-      INVERT_IMG = !INVERT_IMG;
-      if (parseItxt(img, f2)) { fileReadError(); delete[] img; uiTimer = millis(); drawMainMenu(); f2.close(); return; }
-      oled.clear();
-      oled.drawBmpFromRam(0, 0, img, 128, 64);
-      oled.update();
-      f2.close();
-    }
-    yield();
-  }
-}
-#endif

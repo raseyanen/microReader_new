@@ -54,8 +54,8 @@ const uint8_t BirdR_bmp[] PROGMEM = {   // 24x16 - Птица с крыльям�
 
 void dinosaurGame(void) {                                                           // Главное меню игры
   while (true) {                                                                    // Бесконечный цикл
-    data.tick();                                                                    // Тикаем память
-    uint16_t &bestScore = sets.dinoBestScore;                                       // Лучший счет
+    saver.tick();                                                                    // Тикаем память
+    uint16_t &bestScore = cfg.dinoBestScore;                                       // Лучший счет
     //EEPROM.get(DINO_EE_ADDR, bestScore);                                          // Берем его из EEPROM
     oled.clear();                                                                   // Очистка дисплея
     oled.roundRect(0, 9, 127, 46, OLED_STROKE);                                     // Отрисовка интерфейса
@@ -72,7 +72,7 @@ void dinosaurGame(void) {                                                       
     while (true) {                                                                  // Вложенный бесконечный цикл
       up.tick();
       ok.tick();
-      data.tick();                                                                  // Тикаем память
+      saver.tick();                                                                  // Тикаем память
 
       if(up.click() || millis() - uiTimer >= 10000){
         Wire.setClock(600E3);
@@ -84,6 +84,7 @@ void dinosaurGame(void) {                                                       
 
       if (ok.click()) {                                                         // Нажатие на правую - начать играть
         playDinosaurGame();                                                     // Запускаем игру
+        applyButtonTimeouts();
         break;                                                                  // При выходе из игры переходим к отрисовке
       }
 
@@ -125,7 +126,7 @@ startDinoGame:                         // Начало игры
     up.tick();
     ok.tick();
     down.tick();
-    data.tick();                                                             // Тикаем память
+    saver.tick();                                                             // Тикаем память
 
     if (up.click()) return;                                                  // Клик кнопки влево мгновенно возвращает нас в игровое меню
 
@@ -208,7 +209,7 @@ startDinoGame:                         // Начало игры
       checkBatteryCharge();                                                                             // Проверка напряжение аккума
       drawBatteryCharge();                                                                              // Рисуем индикатор
       oled.setCursor(0, 0); oled.print("HI");                                                           // Выводим рекорд
-      oled.setCursor(13, 0); oled.print(sets.dinoBestScore); oled.print(":"); oled.print(score);        // Рекорд:текущий счет
+      oled.setCursor(13, 0); oled.print(cfg.dinoBestScore); oled.print(":"); oled.print(score);        // Рекорд:текущий счет
       oled.line(0, 63, 127, 63);                                                                        // Рисуем поверхность земли (линия)
 
       switch (oldEnemyType) {                                                                           // Выбираем старого противника
@@ -232,14 +233,13 @@ startDinoGame:                         // Начало игры
           oled.setScale(1); oled.setCursor(3, 4); oled.print(F("<- Вверх"));                            // Выводим подсказку
           oled.setCursor(96, 4); oled.print(F("Ок ->"));                                                // Выводим подсказку
           oled.update();                                                                                // Отрисовка картинки на дисплей
-          if (score > sets.dinoBestScore) {                                                             // Если новый рекорд
-            sets.dinoBestScore = score;                                                                 // Обновляем его
-            data.update();                                                                              // Запись
+          if (score > cfg.dinoBestScore) {                                                             // Если новый рекорд
+            cfg.dinoBestScore = score;                                                                 // Обновляем его
           }                                       
           while (1) {                                                                                   // Бесконечный цикл
             ok.tick();
             up.tick(); 
-            data.tick();
+            saver.tick();
             if (ok.click()) goto startDinoGame;                                                         // Начинаем сначала
             if (up.click() || millis() - uiTimer > 30000) return;                                       // Вернулись в меню
             yield();

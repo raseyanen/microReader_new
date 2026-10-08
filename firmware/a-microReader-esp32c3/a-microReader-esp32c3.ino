@@ -47,13 +47,14 @@
 #define IIC_SCL_PIN       9             // GPIO SCL дисплея        (ESP32-C3 Super Mini)
 #define VBAT_ADC_PIN      1             // ADC1_CH1 для измерения напряжения батареи
 #define VBAT_DIVIDER      2             // Коэффициент делителя (1 - без делителя, 2 - делитель 50/50)
-#define EE_KEY            'B'           // Ключ EEPROM (1 байт) - измени, чтобы сбросить настройки
 #define VBAT_FULL_MV      3600          // Напряжение питания при заряженном аккуме в (мВ)
 #define VBAT_EMPTY_MV     2600          // Напряжение питания при севшем аккуме в (мВ)
 #define _EB_DEB           25            // Дебаунс кнопок (мс)
 #define GAME_SPEED        350           // Скорость  (меньше - быстрее)
-#define CALCUL_TYPE       int64_t       // Тип переменной зачений в калькуляторе
-#define ENABLE_BITMAPS    0             // 1 - поддержка картинок .itxt/.h (по умолчанию выключено)
+//#define ENABLE_BITMAPS         // раскомментируйте для поддержки картинок .itxt / .h
+
+#define SETT_NO_DB        // без GyverDB (привязываем переменные по указателю)
+#define SETT_NO_TABLE     // без таблиц и графиков Settings
 
 #define T_SEGMENT 4            // Сегмент тетриса
 #define MAX_WIDTH 64
@@ -62,29 +63,23 @@
 /* ============ Список библиотек ============= */
 #include <Wire.h>           // Либа I2C
 //#include <EEPROM.h>       // Либа EEPROM
-#include <FileData.h>       // Замена епрома
+#include <SaverFile.h>       // Замена епрома
 #include <LittleFS.h>       // Либа файловой системы (в ядре esp32 есть из коробки)
-#include <GyverPortal.h>    // Либа веб морды (автоматически выберет WebServer для ESP32)
-// ВАЖНО: в ядре esp32 v3.x есть СВОЙ файл StringUtils.h в cores/esp32
-// (служебные функции u64_to_str и т.п.). Компилятор находит заголовки по
-// путям ЯДРА РАНЬШЕ, чем по путям библиотек, поэтому угловой include
-// <StringUtils.h> подтягивает файловскую версию ядра, а не библиотеку
-// GyverLibs — отсюда ошибка 'su' has not been declared.
-// Лечится относительным include'ом header'а самой библиотеки:
-#include "../../libraries/StringUtils/src/StringUtils.h"  // GyverLibs StringUtils (su::Text / su::TextParser)
+#include <SettingsESP.h>    // Либа веб морды (автоматически выберет WebServer для ESP32)
+#include <StringUtils.h>  // GyverLibs StringUtils (su::Text / su::TextParser)
 #include <GyverOLED.h>  // Либа олед-дисплея
 #include <EncButton.h>      // Либа кнопок
-#include <GyverTimer.h>     // Либа таймера
+#include <GTimer.h>     // Либа таймера
 #include "driver/gpio.h"
 
 /* =========================================== */
 /* ============ Список объектов ============== */
-GyverPortal ui(&LittleFS);          // Портал
+SettingsESP sett("Wi-Fi Reader");          // Портал
 GyverOLED<SSD1306_128x64> oled;     // Олед
 Button up(UP_BTN_PIN);              // Кнопка вверх
 Button ok(OK_BTN_PIN);              // Кнопка ОК
 Button down(DWN_BTN_PIN);           // Кнопка вниз
-GTimer_ms gameTimer(GAME_SPEED); // Таймер игр
+GTimer<millis> gameTimer(GAME_SPEED, true); // Таймер игр
 
 /* =========================================== */
 /* ========= Глобальные переменные =========== */
@@ -100,9 +95,11 @@ struct {                                // Структура со всеми н
   uint16_t dinoBestScore = 0;           // Счёт динозавра
   uint16_t tetrBestScore = 0;           // Счёт тетриса
   uint16_t snakeBestScore = 0;          // Счёт змейки
-} sets;
-FileData data(&LittleFS, "/data.dat", EE_KEY, &sets, sizeof(sets));  // замена епрома
-#define SEGMENT (sets.tetrisSegment)
+} cfg;
+
+SaverFile saver(LittleFS, "/data.dat", cfg);   // CRC, атомарная запись, запись после паузы в изменениях
+
+#define SEGMENT (cfg.tetrisSegment)
 
 String selectedFile = "";  // Имя выбранной строки
 String fileNames = "";     // Имена всех читаемых файлов
@@ -122,12 +119,9 @@ uint8_t HEIGHT = (128/SEGMENT);                     // и высота
 
 bool locked = false;                 // экран PIN активен
 char pinCode[5] = "";                // пусто = PIN выключен
-String edName, edText;               // веб-редактор
 void lockTick(void);                 // lock.ino
 void pinLoad(void);
 bool pinSet(const String& s);
-void edLoad(String name);            // editor.ino
-bool edSave(String name, const String& text);
 /* =========================================== */
 
 /* ========= Измерение напряжения батареи (ESP32-C3) ========== */
@@ -147,7 +141,7 @@ uint16_t readBatteryMv(void) {
 void checkFileSystem(void);                                              // files.ino
 void drawPage(File file);
 void enterToReadTxtFile(void);
-#if ENABLE_BITMAPS
+#ifdef ENABLE_BITMAPS
 void enterToReadBmpFile(void);
 uint8_t parseItxt(uint8_t* img, File file);
 #endif
@@ -163,6 +157,16 @@ void enterToServiceMode(void);                                           // serv
 void enterToWifiMenu(void);                                              // wifi.ino / portal.ino
 void enterToGameMode(void);                                              // gamemode.ino
 void enterToDeepSleep(void);                                             // gamemode.ino (deep sleep)
+const char* basenameOf(const char* path);
+void waitOkRelease(void);
+void applyHandedness(void);
+void build(sets::Builder& b);
+void validateNetSettings(void);
+void applyContrast(void);
+void applySegment(void);
+void applyButtonTimeouts(void);
+void setHanded(bool left);
+void applyHandedness(void);
 /* =================================================== */
 
 void setup() {
@@ -178,11 +182,6 @@ void setup() {
     enterToServiceMode();               // Сервис мод со своей инициализацией
   }
 
-  ok.setHoldTimeout(1500);              // Длинное удержание кнопки ОК - 1.5 секунды
-  up.setHoldTimeout(1500);
-  up.setStepTimeout(100);
-  down.setStepTimeout(100);
-
   selectedFile.reserve(MAX_FILENAME_LEN + 6);
   fileNames.reserve(4096);              // Резервируем 2 глобальных строки
 
@@ -193,14 +192,15 @@ void setup() {
 
   /*if (EEPROM.read(0) != EE_KEY) {  // Если ключ еепром не совпадает
     EEPROM.write(0, EE_KEY);       // Пишем ключ
-    EEPROM.put(1, sets);           // Пишем дефолтные настройки
+    EEPROM.put(1, cfg);           // Пишем дефолтные настройки
     EEPROM.commit();               // Запись
   } else {                         // Если ключ совпадает
-    EEPROM.get(1, sets);           // Читаем настройки
+    EEPROM.get(1, cfg);           // Читаем настройки
   }*/
-  data.read();  // это заменяет то, что выше
+  saver.begin();  // это заменяет то, что выше
 
   oled.init(IIC_SDA_PIN, IIC_SCL_PIN);  // Инициализация оледа
+  applyHandedness();
 
   for (uint8_t i = 0; i < 6; i++) {  // Индикатор УСПЕШНОГО запуска ESP
     digitalWrite(LED_BUILTIN, LOW);
@@ -212,12 +212,7 @@ void setup() {
   digitalWrite(LED_BUILTIN, HIGH);
 
   Wire.setClock(600E3);
-  oled.flipH(sets.leftmode); // Отзеркалить
-  oled.flipV(sets.leftmode); // Отзеркалить
-  if (sets.leftmode) {  // меняем кнопки
-    up = Button(DWN_BTN_PIN);
-    down = Button(UP_BTN_PIN);
-  }
+
   oled.clear();              // Очистка оледа
   oled.update();             // Вывод пустой картинки
   oled.autoPrintln(true);    // Включаем автоперенос строки
@@ -235,7 +230,7 @@ void loop() {
   up.tick();
   ok.tick();
   down.tick();
-  data.tick();  // тикаем память
+  saver.tick();  // тикаем память
   
   if (locked) { lockTick(); return; }     // экран PIN; игры - удержанием ВВЕРХ
 
@@ -255,7 +250,7 @@ void loop() {
       if (selectedFile.endsWith(".txt")) enterToReadTxtFile();
       else if (selectedFile.endsWith(".md")) enterToReadMdFile();
       else if (selectedFile.endsWith(".tex")) enterToReadTexFile();
-#if ENABLE_BITMAPS
+#ifdef ENABLE_BITMAPS
       else if (selectedFile.endsWith(".itxt") || selectedFile.endsWith(".h")) enterToReadBmpFile();
 #endif
     }

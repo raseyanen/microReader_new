@@ -1,103 +1,43 @@
-/* ======================================================================= */
-/* ================= Билд веб-страницы + подсос значений ================= */
-void build() {                     // Билд страницы
-  GP.BUILD_BEGIN(400);             // Ширина колонок
-  GP.THEME(GP_DARK);               // Темная тема
-  GP.PAGE_TITLE("Wi-Fi Reader");   // Обзываем титл
-  GP.FORM_BEGIN("/cfg");           // Начало формы
-  GP.GRID_RESPONSIVE(600);         // Отключение респонза при узком экране
-  M_BLOCK(                         // Общий блок-колонка для WiFi
-    GP.SUBMIT("Сохранить");        // Кнопка отправки формы
-    M_BLOCK_TAB(                   // Конфиг для AP режима -> текстбоксы (логин + пароль)
-      "Точка доступа",             // Имя + тип DIV
-      GP.TEXT("apSsid", "Имя сети", sets.apSsid, "", 20);
-      GP.BREAK();
-      GP.TEXT("apPass", "Пароль", sets.apPass, "", 20); GP.BREAK(););
-    M_BLOCK_TAB(                   // Конфиг для STA режима -> текстбоксы (логин + пароль)
-      "Подключение к сети",        // Имя + тип DIV
-      GP.TEXT("staSsid", "Имя сети", sets.staSsid, "", 20);
-      GP.BREAK();
-      GP.TEXT("staPass", "Пароль", sets.staPass, "", 20); GP.BREAK();
-      M_BOX(GP_CENTER, GP.LABEL("Автоподключение"); GP.SWITCH("staEn", sets.staModeEn);););
-    M_BLOCK_TAB(                   // Другие настройки
-      "Другое",             // Имя + тип DIV
-      M_BOX(GP_CENTER, GP.LABEL("Режим левши"); GP.SWITCH("leftEn", sets.leftmode);); GP.BREAK();
-      M_BOX(GP_CENTER, GP.LABEL("Размер сегмента игр"); GP.NUMBER("tetrSeg", "", sets.tetrisSegment);); GP.BREAK(); // размер сегмента
-      M_BOX(GP_CENTER, GP.LABEL("PIN (4 цифры, пусто = выкл.)"); GP.TEXT("pin", "", pinCode, "90px", 4);); GP.BREAK();
-      M_BOX(GP_CENTER, GP.LABEL("Яркость"); GP.SLIDER("con", sets.dispContrast, 10, 100););););
-  GP.FORM_END();                 // <- Конец формы (костыль)
-  M_BLOCK_TAB(                   // Блок с OTA-апдейтом
-    "Обновление прошивки",       // Имя + тип DIV
-    GP.OTA_FIRMWARE();           // Кнопка с OTA начинкой
-  );
-  M_BLOCK_TAB(                   // Блок с файловым менеджером
-    "Файловая система",          // Имя + тип DIV
-    GP.FILE_UPLOAD("file_upl");  // Кнопка для загрузки файла
-    GP.FILE_MANAGER(&LittleFS);  // Файловый менеджер
-  );
-    M_BLOCK_TAB(                   // Редактор файлов
-    "Редактор",
-    GP.FORM_BEGIN("/edit");
-    GP.TEXT("edName", "Имя файла (.md .txt .tex)", edName, "", MAX_FILENAME_LEN + 3);
-    GP.BREAK();
-    GP.AREA("edText", 14, edText);
-    GP.BREAK();
-    GP.SUBMIT("Сохранить");
-    GP.FORM_END();
-    GP.FORM_BEGIN("/edopen");
-    GP.TEXT("edOpen", "Открыть файл", "", "", MAX_FILENAME_LEN + 3);
-    GP.SUBMIT("Открыть");
-    GP.FORM_END();
-  );
-  GP.BUILD_END();                  // Конец билда страницы
+/* ================= Веб-морда на Settings (GyverLibs) ================= */
+
+// то, что раньше проверялось при сабмите формы
+void validateNetSettings(void) {
+  if (strlen(cfg.apSsid) < 1) strcpy(cfg.apSsid, AP_DEFAULT_SSID);   // пустое имя сети AP
+  if (strlen(cfg.apPass) < 8) strcpy(cfg.apPass, AP_DEFAULT_PASS);   // короткий пароль AP
+  if (cfg.staModeEn && (strlen(cfg.staSsid) < 1 || strlen(cfg.staPass) < 8)) {
+    cfg.staModeEn = false;                                           // битые имя/пароль - выключаем коннект
+  }
 }
 
-void action(GyverPortal& p) {      // Подсос значений со страницы
-  if (p.form("/cfg")) {            // Если есть сабмит формы - копируем все в переменные
-    p.copyStr("apSsid", sets.apSsid);
-    p.copyStr("apPass", sets.apPass);
-    p.copyStr("staSsid", sets.staSsid);
-    p.copyStr("staPass", sets.staPass);
-    p.copyBool("staEn", sets.staModeEn);
-    p.copyBool("leftEn", sets.leftmode);
-    String pinS;
-    p.copyString("pin", pinS);
-    pinSet(pinS);               // неверный формат игнорируется, PIN вступает в силу при следующем запуске
-    p.copyInt("con", sets.dispContrast);
-    byte con = map(sets.dispContrast, 10, 100, 1, 255);
-    oled.setContrast(con);            // Тут же задаем яркость оледа
-    uint8_t tmp_tseg;
-    p.copyInt("tetrSeg", tmp_tseg);
-    if (tmp_tseg != sets.tetrisSegment) {      // если поменяли
-      sets.tetrisSegment = tmp_tseg;           // записать
-      WIDTH = 64 / tmp_tseg - 16 / tmp_tseg;   // новая ширина
-      HEIGHT = 128 / tmp_tseg;                 // и высота
-    }
+void applyContrast(void) {
+  oled.setContrast(map(cfg.dispContrast, 10, 100, 1, 255));
+}
 
-    if (strlen(sets.apSsid) < 1)  strcpy(sets.apSsid, AP_DEFAULT_SSID);   // Проверка на пустое имя сети AP
-    if (strlen(sets.apPass) < 8)  strcpy(sets.apPass, AP_DEFAULT_PASS);   // Проверка на пустой пасс AP
+void applySegment(void) {
+  cfg.tetrisSegment = constrain(cfg.tetrisSegment, 1, 8);            // 0 раньше приводило к делению на ноль
+  WIDTH = 64 / cfg.tetrisSegment - 16 / cfg.tetrisSegment;
+  HEIGHT = 128 / cfg.tetrisSegment;
+}
 
-    if (sets.staModeEn) {                                                 // Если включен коннект
-      if (strlen(sets.staSsid) < 1 || strlen(sets.staPass) < 8) {         // Проверка имени и пасса
-        sets.staModeEn = false;                                           // Битое имя/пасс - выключаем коннект
-      }
-    }
-
-    uint8_t contrast = map(sets.dispContrast, 10, 100, 1, 255);
-    oled.setContrast(contrast);   // Тут же задаем яркость оледа
-    //EEPROM.put(1, sets);        // Сохраняем все настройки в EEPROM
-    //EEPROM.commit();            // Записываем
-    data.update();                // Записать. Дальше оно само
+void build(sets::Builder& b) {
+  {
+    sets::Group g(b, "Точка доступа");
+    b.Input("Имя сети", cfg.apSsid);
+    b.Pass("Пароль (от 8 символов)", cfg.apPass);
   }
-    if (p.form("/edit")) {                 // сохранить из редактора
-    String n, t;
-    p.copyString("edName", n);
-    p.copyString("edText", t);
-    edSave(n, t);
+  {
+    sets::Group g(b, "Подключение к сети");
+    b.Input("Имя сети", cfg.staSsid);
+    b.Pass("Пароль", cfg.staPass);
+    b.Switch("Автоподключение", &cfg.staModeEn);
   }
-  if (p.form("/edopen")) {               // открыть файл в редакторе
-    String n;
-    p.copyString("edOpen", n);
-    edLoad(n);
+  {
+    sets::Group g(b, "Другое");
+    if (b.Switch("Режим левши", &cfg.leftmode)) applyHandedness();
+    if (b.Number("Размер сегмента игр", &cfg.tetrisSegment, 1, 8)) applySegment();
+    if (b.Slider("Яркость", 10, 100, 10, "%", &cfg.dispContrast)) applyContrast();
+    if (b.Input("PIN (4 цифры, пусто = выкл.)", pinCode, R"(^(\d{4})?$)", "Только 4 цифры")) {
+      if (!pinSet(String(pinCode))) pinLoad();     // неверный формат - вернуть сохранённый PIN
+    }
   }
 }
