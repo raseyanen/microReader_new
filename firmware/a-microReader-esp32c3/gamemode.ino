@@ -29,8 +29,7 @@ void enterToDeepSleep(void) {
   pinMode(UP_BTN_PIN, INPUT_PULLUP);
   pinMode(OK_BTN_PIN, INPUT_PULLUP);
   pinMode(DWN_BTN_PIN, INPUT_PULLUP);
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH); // лед погашен
+  ledSet(false);                   // лед погашен (если он не на линии I2C)
 
   // Для ESP32-C3 на уровне регистра принудительно выставляем пины на вход
   gpio_set_direction((gpio_num_t)UP_BTN_PIN, GPIO_MODE_INPUT);

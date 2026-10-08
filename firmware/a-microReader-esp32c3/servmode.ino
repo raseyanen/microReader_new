@@ -2,12 +2,12 @@
 uint8_t servCursor = 0;
 
 void enterToServiceMode(void) {
-  oled.init(IIC_SDA_PIN, IIC_SCL_PIN);
+  displayBegin();
 
   oled.clear();       // Очистка оледа
   oled.update();      // Вывод пустой картинки
 
-  digitalWrite(LED_BUILTIN, LOW); // Зажигаем лед
+  ledSet(true);                   // Зажигаем лед (если он не на линии I2C)
 
   //EEPROM.begin(100);              // Инициализация EEPROM
   while (!LittleFS.begin()) {     // Инициализация файловой системы

@@ -161,6 +161,8 @@ const char* basenameOf(const char* path);
 void waitOkRelease(void);
 void applyHandedness(void);
 void build(sets::Builder& b);
+void displayBegin(void);
+void ledSet(bool on);
 void validateNetSettings(void);
 void applyContrast(void);
 void applySegment(void);
@@ -169,9 +171,56 @@ void setHanded(bool left);
 void applyHandedness(void);
 /* =================================================== */
 
+/* ======= Безопасный запуск дисплея =======
+   Светодиод ESP32-C3 Super Mini сидит на GPIO8 - это ТА ЖЕ нога, что SDA дисплея.
+   Если дёргать LED_BUILTIN как обычный GPIO, линия I2C залипает: дисплей остаётся
+   неинициализированным и показывает "белый шум" (при этом светодиод горит).
+   Поэтому светодиод трогаем только если он не совпадает с пинами I2C. */
+#define LED_SHARED_WITH_I2C ((LED_BUILTIN) == (IIC_SDA_PIN) || (LED_BUILTIN) == (IIC_SCL_PIN))
+
+void ledSet(bool on) {                                 // on = true -> светодиод горит (плата с активным LOW)
+  if (LED_SHARED_WITH_I2C) return;
+  digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
+}
+
+// Если сброс случился посреди передачи, дисплей может держать SDA низким - тактируем SCL и шлём STOP
+static void i2cRecover(uint8_t sda, uint8_t scl) {
+  pinMode(sda, INPUT_PULLUP);
+  pinMode(scl, OUTPUT);
+  digitalWrite(scl, HIGH);
+  for (uint8_t i = 0; i < 9 && !digitalRead(sda); i++) {
+    digitalWrite(scl, LOW);  delayMicroseconds(10);
+    digitalWrite(scl, HIGH); delayMicroseconds(10);
+  }
+  pinMode(sda, OUTPUT);
+  digitalWrite(sda, LOW);  delayMicroseconds(10);       // STOP: SDA низ->верх при высоком SCL
+  digitalWrite(scl, HIGH); delayMicroseconds(10);
+  digitalWrite(sda, HIGH); delayMicroseconds(10);
+  pinMode(sda, INPUT_PULLUP);
+  pinMode(scl, INPUT_PULLUP);
+}
+
+void displayBegin(void) {
+  i2cRecover(IIC_SDA_PIN, IIC_SCL_PIN);
+  Wire.begin(IIC_SDA_PIN, IIC_SCL_PIN);
+  Wire.setClock(400000);                                // на время инициализации - умеренная скорость
+  Wire.beginTransmission(0x3C);
+  bool found = (Wire.endTransmission() == 0);
+  if (!found) {
+    Wire.beginTransmission(0x3D);
+    found = (Wire.endTransmission() == 0);
+  }
+  Serial.println(found ? F("oled: найден") : F("oled: НЕ ОТВЕЧАЕТ - проверь пины SDA/SCL и пайку"));
+  oled.init(IIC_SDA_PIN, IIC_SCL_PIN);                  // работает и с версией библиотеки, где init() возвращает bool
+  Wire.setClock(600E3);
+  oled.clear();
+  oled.update();
+}
+
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_BUILTIN, OUTPUT);         // Лед на модуле как выход
+  Serial.println(F("boot"));
+  if (!LED_SHARED_WITH_I2C) pinMode(LED_BUILTIN, OUTPUT);   // не трогаем светодиод, если он на линии I2C
   pinMode(UP_BTN_PIN, INPUT_PULLUP);
   pinMode(OK_BTN_PIN, INPUT_PULLUP);
   pinMode(DWN_BTN_PIN, INPUT_PULLUP);   // Все пины кнопок в режиме входа с подтяжкой
@@ -183,47 +232,54 @@ void setup() {
   }
 
   selectedFile.reserve(MAX_FILENAME_LEN + 6);
-  fileNames.reserve(4096);              // Резервируем 2 глобальных строки
+  fileNames.reserve(1024);              // 1 КБ хватает на ~60 файлов, String при необходимости вырастет сам
 
-  //EEPROM.begin(100);                    // Инициализация EEPROM
-  while (!LittleFS.begin()) {           // Инициализация файловой системы
+  displayBegin();                       // дисплей поднимаем ПЕРВЫМ, чтобы было видно, что происходит
+  oled.autoPrintln(true);
+  oled.home();
+  oled.print(F("Запуск..."));
+  oled.update();
+
+  if (!LittleFS.begin()) {              // файловая система не смонтировалась - форматируем
+    Serial.println(F("fs: формат (до пары минут)"));
+    oled.clear();
+    oled.home();
+    oled.print(F("Формат ФС..."));
+    oled.setCursor(0, 2);
+    oled.print(F("подождите, это"));
+    oled.setCursor(0, 3);
+    oled.print(F("может занять минуту"));
+    oled.update();
     LittleFS.format();
+    if (!LittleFS.begin()) {            // и это не помогло - проблема в таблице разделов
+      Serial.println(F("fs: ОШИБКА - проверь Partition Scheme / partitions.csv"));
+      oled.clear();
+      oled.home();
+      oled.print(F("ОШИБКА ФС"));
+      oled.setCursor(0, 2);
+      oled.print(F("Partition Scheme?"));
+      oled.update();
+      while (1) delay(1000);
+    }
   }
+  Serial.println(F("fs ok"));
 
-  /*if (EEPROM.read(0) != EE_KEY) {  // Если ключ еепром не совпадает
-    EEPROM.write(0, EE_KEY);       // Пишем ключ
-    EEPROM.put(1, cfg);           // Пишем дефолтные настройки
-    EEPROM.commit();               // Запись
-  } else {                         // Если ключ совпадает
-    EEPROM.get(1, cfg);           // Читаем настройки
-  }*/
-  saver.begin();  // это заменяет то, что выше
+  saver.begin();                        // настройки и рекорды
+  Serial.println(F("settings ok"));
 
-  oled.init(IIC_SDA_PIN, IIC_SCL_PIN);  // Инициализация оледа
-  applyHandedness();
+  applyHandedness();                    // экран и кнопки по режиму левши (после init дисплея!)
 
-  for (uint8_t i = 0; i < 6; i++) {  // Индикатор УСПЕШНОГО запуска ESP
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(30);
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(30);
-  }
-
-  digitalWrite(LED_BUILTIN, HIGH);
-
-  Wire.setClock(600E3);
-
-  oled.clear();              // Очистка оледа
-  oled.update();             // Вывод пустой картинки
-  oled.autoPrintln(true);    // Включаем автоперенос строки
+  oled.clear();
+  oled.update();
 
   checkFileSystem();
   pinLoad();
   locked = (pinCode[0] != 0);
   if (!locked) drawMainMenu();
-  
-  WIDTH = (64/SEGMENT - 16/SEGMENT);          // обновляем ширину 
-  HEIGHT = (128/SEGMENT);                     // и высоту
+  Serial.println(F("setup done"));
+
+  WIDTH = (64/SEGMENT - 16/SEGMENT);    // обновляем ширину
+  HEIGHT = (128/SEGMENT);               // и высоту
 }
 
 void loop() {

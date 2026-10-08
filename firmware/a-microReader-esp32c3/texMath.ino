@@ -638,98 +638,125 @@ static TexBox texCore(TexNode* c, int16_t x, int16_t base, uint8_t lvl, bool dra
   return r;
 }
 
+// ---------- чтение файла строками без String ----------
+static uint8_t rdBuf[64];
+static uint8_t rdPos = 0, rdLen = 0;
+static uint32_t rdOff = 0, rdLineStart = 0;   // смещение после прочитанного / начала строки
+
+static void rdBegin(File& f) { f.seek(0); rdPos = rdLen = 0; rdOff = 0; }
+
+static int rdGet(File& f) {
+  if (rdPos >= rdLen) {
+    int n = f.read(rdBuf, sizeof(rdBuf));
+    if (n <= 0) return -1;
+    rdLen = n; rdPos = 0;
+  }
+  rdOff++;
+  return rdBuf[rdPos++];
+}
+
+// читает строку (без \r\n) в out, лишние символы отбрасывает. false - конец файла
+static bool rdLine(File& f, char* out, uint16_t cap) {
+  rdLineStart = rdOff;
+  int c = rdGet(f);
+  if (c < 0) return false;
+  uint16_t n = 0;
+  while (c >= 0 && c != '\n') {
+    if (c != '\r' && n < cap - 1) out[n++] = (char)c;
+    c = rdGet(f);
+  }
+  out[n] = 0;
+  yield();
+  return true;
+}
+
+static char* texTrim(char* s) {                       // обрезка пробелов с обеих сторон на месте
+  while (*s == ' ' || *s == '\t') s++;
+  char* e = s + strlen(s);
+  while (e > s && (e[-1] == ' ' || e[-1] == '\t')) *--e = 0;
+  return s;
+}
+
+// копирует название (не больше TEX_NAME_LEN букв UTF-8, не разрывая символ)
+static void texCopyName(char* dst, const char* nm, uint16_t total) {
+  uint16_t nb = 0; uint8_t chars = 0;
+  while (nb < total && chars < TEX_NAME_LEN) {
+    uint8_t b = (uint8_t)nm[nb];
+    uint8_t len = (b >= 0xF0) ? 4 : (b >= 0xE0) ? 3 : (b >= 0xC0) ? 2 : 1;
+    if (nb + len > total || nb + len > TEX_NAME_BYTES - 1) break;
+    nb += len; chars++;
+  }
+  memcpy(dst, nm, nb);
+  dst[nb] = 0;
+}
+
 // ---------------- загрузка: одна формула = одна страница ----------------
 // В texLines кладётся ТОЛЬКО формула страницы target; остальные только считаются.
+static char texLn[512];                                // буфер строки файла (длиннее - обрезается)
+static char texPend[64];                               // название формулы, ожидающей строк
+
 static void texLoadPages(File file, int8_t target) {
-  file.seek(0);
+  rdBegin(file);
   texNameCount = 0;
   texLineCount = 0;
   memset(texNames, 0, sizeof(texNames));
   memset(texLines, 0, sizeof(texLines));
+  texPend[0] = 0;
+  uint8_t cur = 0;                                     // строк накоплено в текущей формуле
 
-  String formula, pendingName;
-  bool haveFormula = false;
-
-  auto flush = [&](const String& name) {
-    if (formula.length() == 0) { haveFormula = false; return; }
+  auto flush = [&]() {
+    if (cur == 0) return;
     if (texNameCount < TEX_MAX_PAGES) {
-      if (texNameCount == (uint8_t)target) {
-        uint8_t li = 0, ci = 0;
-        for (uint16_t i = 0; i < formula.length(); i++) {
-          char ch = formula[i];
-          if (ch == '\n') { if (li + 1 >= TEX_MAX_LINES) break; li++; ci = 0; continue; }
-          if (ci < TEX_LINE_LEN - 1) texLines[li][ci++] = ch;
-        }
-        texLineCount = li + 1;
-      }
-            // обрезаем по БУКВАМ, не разрывая двухбайтовый символ
-      const char* nm = name.c_str();
-      uint8_t total = name.length(), nb = 0, chars = 0;
-      while (nb < total && chars < TEX_NAME_LEN) {
-        uint8_t b = (uint8_t)nm[nb];
-        uint8_t len = (b >= 0xF0) ? 4 : (b >= 0xE0) ? 3 : (b >= 0xC0) ? 2 : 1;
-        if (nb + len > total) break;
-        nb += len; chars++;
-      }
-      memcpy(texNames[texNameCount], nm, nb);
-      texNames[texNameCount][nb] = 0;
+      if (texNameCount == (uint8_t)target) texLineCount = min<uint8_t>(cur, TEX_MAX_LINES);
+      texCopyName(texNames[texNameCount], texPend, strlen(texPend));
       texNameCount++;
     }
-    formula = "";
-    haveFormula = false;
+    cur = 0;
   };
 
-  String line;
-  auto processLine = [&]() {
-    line.trim();
-    if (line.startsWith("##")) {
-      flush(pendingName);
-      pendingName = line.substring(2);
-      pendingName.trim();
-    } else if (line.startsWith("%") || line.startsWith("//")) {
+  while (rdLine(file, texLn, sizeof(texLn))) {
+    char* s = texTrim(texLn);
+    if (!strncmp(s, "##", 2)) {                        // ## Название - новая страница
+      flush();
+      strncpy(texPend, texTrim(s + 2), sizeof(texPend) - 1);
+      texPend[sizeof(texPend) - 1] = 0;
+    } else if (s[0] == '%' || (s[0] == '/' && s[1] == '/')) {
       // комментарий
-    } else if (line.startsWith("\\title")) {
-      flush(pendingName);
-      pendingName = "";
-      int a = line.indexOf('{'), b = line.lastIndexOf('}');
-      if (a >= 0 && b > a) pendingName = line.substring(a + 1, b);
-      pendingName.trim();
-    } else if (line.length()) {
-      if (line.startsWith("\\begin") || line.startsWith("\\end")) {   // строка-обёртка - пропускаем
-        int b = line.indexOf('}');
-        String rest = (b >= 0) ? line.substring(b + 1) : String("");
-        rest.trim();
-        line = rest;
+    } else if (!strncmp(s, "\\title", 6)) {            // \title{Название} - новая страница
+      flush();
+      texPend[0] = 0;
+      char* a = strchr(s, '{');
+      char* b = strrchr(s, '}');
+      if (a && b && b > a) {
+        *b = 0;
+        strncpy(texPend, texTrim(a + 1), sizeof(texPend) - 1);
+        texPend[sizeof(texPend) - 1] = 0;
       }
-      if (line == "$$" || line == "\\[" || line == "\\]") line = "";
-      if (line.length()) {
-        if (pendingName.length() == 0 && !haveFormula) {
-          int sep = line.indexOf(": ");                // "Название: формула"
-          if (sep > 0 && sep <= TEX_NAME_LEN * 2) {
-            pendingName = line.substring(0, sep);
-            line = line.substring(sep + 2);
+    } else if (*s) {
+      if (!strncmp(s, "\\begin", 6) || !strncmp(s, "\\end", 4)) {   // строка-обёртка - пропускаем
+        char* b = strchr(s, '}');
+        s = b ? texTrim(b + 1) : s + strlen(s);
+      }
+      if (!strcmp(s, "$$") || !strcmp(s, "\\[") || !strcmp(s, "\\]")) s += strlen(s);
+      if (*s) {
+        if (!texPend[0] && cur == 0) {                 // "Название: формула"
+          char* sep = strstr(s, ": ");
+          if (sep && sep > s && (sep - s) <= TEX_NAME_LEN * 2) {
+            *sep = 0;
+            strncpy(texPend, s, sizeof(texPend) - 1);
+            texPend[sizeof(texPend) - 1] = 0;
+            s = texTrim(sep + 2);
           }
         }
-        if (haveFormula) formula += "\n";
-        formula += line;
-        haveFormula = true;
+        if (cur < 255) {
+          if (texNameCount == (uint8_t)target && cur < TEX_MAX_LINES)
+            strncpy(texLines[cur], s, TEX_LINE_LEN - 1);   // texLines обнулён - терминатор на месте
+          cur++;
+        }
       }
     }
-    line = "";
-  };
-
-  while (file.available()) {
-    int c = file.read();
-    if (c == '\n' || c == '\r') {
-      if (c == '\r' && file.peek() == '\n') file.read();
-      processLine();
-      yield();
-    } else if (line.length() < TEX_LINE_LEN * TEX_MAX_LINES) {
-      line += (char)c;
-    }
   }
-  processLine();
-  flush(pendingName);
+  flush();
 }
 
 static uint8_t texTotalPages() { return max<uint8_t>(texNameCount, 1); }
@@ -945,6 +972,7 @@ void enterToReadTexFile(void) {
   while (1) {
     up.tick(); ok.tick(); down.tick();
     if (ok.hold()) {                                   // выход - удержание ОК
+      waitOkRelease();
       uiTimer = millis();
       drawMainMenu();
       file.close();
@@ -973,4 +1001,4 @@ void enterToReadTexFile(void) {
     }
     yield();
   }
-}  
+}
